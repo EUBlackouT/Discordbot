@@ -1,0 +1,20 @@
+node_modules/
+dist/
+# Legacy SQLite (removed)
+*.db
+*.db-journal
+
+# IDE / local tooling
+.cursor/
+.agents/
+supabase/.temp/
+
+# Docker
+.docker/
+.env
+coverage/
+.DS_Store
+assets/generated/
+data/campaigns/
+scripts/seed-output.sql
+*.log

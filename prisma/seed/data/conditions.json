@@ -1,0 +1,14 @@
+[
+  { "key": "blinded", "name": "Blinded", "description": "Cannot see; auto-fail sight checks; attacks against have advantage." },
+  { "key": "charmed", "name": "Charmed", "description": "Cannot attack charmer; charmer has advantage on social checks." },
+  { "key": "frightened", "name": "Frightened", "description": "Disadvantage on ability checks and attacks while source is in line of sight." },
+  { "key": "grappled", "name": "Grappled", "description": "Speed becomes 0; ends if grappler is incapacitated." },
+  { "key": "incapacitated", "name": "Incapacitated", "description": "Cannot take actions or reactions." },
+  { "key": "invisible", "name": "Invisible", "description": "Heavily obscured; attacks against have disadvantage." },
+  { "key": "paralyzed", "name": "Paralyzed", "description": "Incapacitated; auto-fail STR/DEX saves; attacks have advantage." },
+  { "key": "poisoned", "name": "Poisoned", "description": "Disadvantage on attack rolls and ability checks." },
+  { "key": "prone", "name": "Prone", "description": "Disadvantage on attacks; melee against has advantage." },
+  { "key": "restrained", "name": "Restrained", "description": "Speed 0; disadvantage on attacks and DEX saves." },
+  { "key": "stunned", "name": "Stunned", "description": "Incapacitated; auto-fail STR/DEX saves." },
+  { "key": "unconscious", "name": "Unconscious", "description": "Incapacitated; prone; auto-fail STR/DEX saves." }
+]

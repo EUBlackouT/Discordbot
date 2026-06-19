@@ -1,0 +1,7 @@
+[
+  { "key": "human", "name": "Human", "speed": 30, "size": "Medium", "traits": ["Versatile: +1 to all ability scores"], "abilityBonuses": { "STR": 1, "DEX": 1, "CON": 1, "INT": 1, "WIS": 1, "CHA": 1 }, "languages": ["Common", "One extra language"] },
+  { "key": "elf", "name": "Elf", "speed": 30, "size": "Medium", "traits": ["Darkvision 60ft", "Keen senses", "Fey ancestry"], "abilityBonuses": { "DEX": 2 }, "languages": ["Common", "Elvish"] },
+  { "key": "dwarf", "name": "Dwarf", "speed": 25, "size": "Medium", "traits": ["Darkvision 60ft", "Dwarven resilience", "Stonecunning"], "abilityBonuses": { "CON": 2 }, "languages": ["Common", "Dwarvish"] },
+  { "key": "halfling", "name": "Halfling", "speed": 25, "size": "Small", "traits": ["Lucky", "Brave", "Halfling nimbleness"], "abilityBonuses": { "DEX": 2 }, "languages": ["Common", "Halfling"] },
+  { "key": "half_orc", "name": "Half-Orc", "speed": 30, "size": "Medium", "traits": ["Darkvision 60ft", "Relentless endurance", "Savage attacks"], "abilityBonuses": { "STR": 2, "CON": 1 }, "languages": ["Common", "Orc"] }
+]

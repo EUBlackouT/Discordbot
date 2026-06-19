@@ -1,0 +1,504 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_DATABASE_URL")
+}
+
+// ─── Multi-tenant Guild (Discord server) ───────────────────────────────────
+
+model Guild {
+  id                    String   @id // Discord guild snowflake
+  name                  String   @default("")
+  planTier              String   @default("free") // free | premium | enterprise
+  subscriptionStatus    String   @default("active") // active | trialing | cancelled | past_due
+  maxCampaignChannels   Int      @default(5)
+  maxPartySize          Int      @default(8)
+  imageAutoGenerate     Boolean  @default(false)
+  installedAt           DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  campaigns Campaign[]
+  characters Character[]
+  drafts     CharacterCreationDraft[]
+}
+
+// ─── Campaign & Channels ───────────────────────────────────────────────────
+
+model Campaign {
+  id                    String   @id @default(uuid())
+  guildId               String
+  name                  String
+  status                String   @default("active") // active | paused | ended
+  currentSceneId        String?
+  currentLocationId     String?
+  sessionSummary        String   @default("")
+  dangerLevel           Int      @default(3)
+  openThreads           String   @default("[]") // JSON array
+  resolvedThreads       String   @default("[]") // JSON array
+  imageAutoGenerate     Boolean  @default(false)
+  imageDailyLimit       Int      @default(10)
+  imageGeneratedToday   Int      @default(0)
+  imageLimitResetAt     DateTime @default(now())
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  guild            Guild             @relation(fields: [guildId], references: [id], onDelete: Cascade)
+  channels         CampaignChannel[]
+  members          CampaignMember[]
+  players          Player[]
+  characters       Character[]
+  scenes           Scene[]
+  locations        Location[]
+  npcs             NPC[]
+  factions         Faction[]
+  quests           Quest[]
+  memories         MemoryEntry[]
+  rolls            RollHistory[]
+  turns            ConversationTurn[]
+  combats          CombatState[]
+  pendingChecks    PendingCheck[]
+  assets           Asset[]
+  visualStyle      VisualStyleProfile?
+  characterDrafts  CharacterCreationDraft[]
+
+  @@index([guildId])
+  @@index([guildId, status])
+}
+
+model CampaignChannel {
+  id         String   @id @default(uuid())
+  campaignId String
+  channelId  String   @unique
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+}
+
+model CampaignMember {
+  id          String   @id @default(uuid())
+  campaignId  String
+  discordId   String
+  characterId String
+  displayName String?
+  isActive    Boolean  @default(true)
+  joinedAt    DateTime @default(now())
+
+  campaign  Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  character Character @relation(fields: [characterId], references: [id])
+
+  @@unique([campaignId, discordId])
+  @@unique([campaignId, characterId])
+  @@index([discordId])
+  @@index([campaignId, isActive])
+}
+
+// ─── Players & Characters ──────────────────────────────────────────────────
+
+model Player {
+  id         String   @id @default(uuid())
+  discordId  String
+  campaignId String?
+  displayName String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  campaign   Campaign?  @relation(fields: [campaignId], references: [id])
+  characters Character[]
+
+  @@unique([discordId, campaignId])
+}
+
+model Character {
+  id              String   @id @default(uuid())
+  guildId         String
+  campaignId      String?
+  playerId        String
+  ownerDiscordId  String
+  name            String
+  race            String
+  className       String
+  background      String
+  level           Int      @default(1)
+  abilityScores   String   // JSON: {STR,DEX,CON,INT,WIS,CHA}
+  abilityMods     String   // JSON
+  proficiencyBonus Int     @default(2)
+  savingThrows    String   @default("[]") // JSON array of abilities
+  skillProficiencies String @default("[]")
+  armorClass      Int      @default(10)
+  hitPoints       Int
+  maxHitPoints    Int
+  hitDice         String   // e.g. "1d10"
+  initiative      Int      @default(0)
+  speed           Int      @default(30)
+  passivePerception Int    @default(10)
+  equipment       String   @default("[]")
+  languages       String   @default("[]")
+  features        String   @default("[]")
+  spellcasting    String?  // JSON: ability, cantrips, spellsKnown, spellsPrepared, slots, classChoices
+  personality     String   @default("")
+  ideals          String   @default("")
+  bonds           String   @default("")
+  flaws           String   @default("")
+  backstory       String   @default("")
+  appearance      String   @default("")
+  portraitPrompt  String   @default("")
+  conditions      String   @default("[]")
+  inventory       String   @default("[]")
+  currency        String   @default("{}")
+  currentLocationId String?
+  isComplete      Boolean  @default(false)
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  campaign      Campaign?    @relation(fields: [campaignId], references: [id])
+  guild         Guild        @relation(fields: [guildId], references: [id], onDelete: Cascade)
+  player        Player       @relation(fields: [playerId], references: [id])
+  rolls         RollHistory[]
+  pendingChecks PendingCheck[]
+  assets        Asset[]
+  campaignMemberships CampaignMember[]
+
+  @@unique([guildId, ownerDiscordId, name])
+  @@index([guildId, ownerDiscordId])
+  @@index([campaignId])
+  @@index([ownerDiscordId])
+}
+
+model CharacterCreationDraft {
+  id             String   @id @default(uuid())
+  guildId        String
+  discordId      String
+  campaignId     String?
+  step           String   @default("name")
+  data           String   @default("{}") // JSON progress
+  abilityMethod  String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  guild    Guild     @relation(fields: [guildId], references: [id], onDelete: Cascade)
+  campaign Campaign? @relation(fields: [campaignId], references: [id])
+
+  @@unique([guildId, discordId])
+}
+
+// ─── World ─────────────────────────────────────────────────────────────────
+
+model Scene {
+  id          String   @id @default(uuid())
+  campaignId  String
+  name        String
+  description String
+  mood        String   @default("")
+  isActive    Boolean  @default(true)
+  startedAt   DateTime @default(now())
+  endedAt     DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+}
+
+model Location {
+  id                  String   @id @default(uuid())
+  campaignId          String
+  name                String
+  slug                String
+  description         String
+  visualDescription   String   @default("")
+  mood                String   @default("")
+  lighting            String   @default("")
+  architecture        String   @default("")
+  landmarks           String   @default("[]")
+  persistentObjects   String   @default("[]")
+  currentChanges      String   @default("")
+  activeAssetId       String?
+  isMajor             Boolean  @default(true)
+  visitCount          Int      @default(0)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  assets   Asset[]
+
+  @@unique([campaignId, slug])
+}
+
+model NPC {
+  id            String   @id @default(uuid())
+  campaignId    String
+  name          String
+  description   String   @default("")
+  visualDescription String @default("")
+  goals         String   @default("")
+  secrets       String   @default("")
+  attitude      String   @default("neutral")
+  locationId    String?
+  isActive      Boolean  @default(true)
+  activeAssetId String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+}
+
+model Faction {
+  id           String   @id @default(uuid())
+  campaignId   String
+  name         String
+  description  String   @default("")
+  reputation   Int      @default(0)
+  goals        String   @default("")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+}
+
+model Quest {
+  id          String   @id @default(uuid())
+  campaignId  String
+  title       String
+  description String
+  status      String   @default("active") // active | completed | failed
+  objectives  String   @default("[]")
+  isPrimary   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId, status])
+}
+
+// ─── Memory & Conversation ─────────────────────────────────────────────────
+
+model MemoryEntry {
+  id          String   @id @default(uuid())
+  campaignId  String
+  category    String   // public | hidden | player_secret
+  subject     String   @default("")
+  content     String
+  importance  Int      @default(3)
+  tags        String   @default("[]")
+  relatedIds  String   @default("{}")
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId, category, isActive])
+  @@index([campaignId, createdAt])
+}
+
+model ConversationTurn {
+  id           String   @id @default(uuid())
+  campaignId   String
+  discordId    String
+  characterId  String?
+  message      String
+  response     String?
+  controllerAction String?
+  createdAt    DateTime @default(now())
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId, createdAt])
+  @@index([discordId])
+}
+
+// ─── Dice & Checks ─────────────────────────────────────────────────────────
+
+model RollHistory {
+  id              String   @id @default(uuid())
+  campaignId      String?
+  characterId     String?
+  rollerDiscordId String
+  expression      String
+  rawDice         String   // JSON
+  keptDice        String   // JSON
+  droppedDice     String   @default("[]")
+  modifier        Int      @default(0)
+  total           Int
+  advantageState  String   @default("normal")
+  checkType       String?
+  skill           String?
+  ability         String?
+  dc              Int?
+  success         Boolean?
+  pendingCheckId  String?
+  createdAt       DateTime @default(now())
+
+  campaign  Campaign?  @relation(fields: [campaignId], references: [id])
+  character Character? @relation(fields: [characterId], references: [id])
+
+  @@index([campaignId, createdAt])
+  @@index([rollerDiscordId])
+}
+
+model PendingCheck {
+  id                  String   @id @default(uuid())
+  campaignId          String
+  targetDiscordId     String
+  targetCharacterId   String
+  checkType           String
+  skill               String?
+  ability             String
+  dc                  Int
+  advantageState      String   @default("normal")
+  publicReason        String
+  successConsequence  String
+  failureConsequence  String
+  controllerReason    String   @default("")
+  status              String   @default("pending") // pending | resolved | cancelled
+  rollId              String?
+  resolvedSuccess     Boolean?
+  createdAt           DateTime @default(now())
+  resolvedAt          DateTime?
+
+  campaign  Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  character Character @relation(fields: [targetCharacterId], references: [id])
+
+  @@index([campaignId, status])
+  @@index([targetDiscordId, status])
+}
+
+// ─── Combat ────────────────────────────────────────────────────────────────
+
+model CombatState {
+  id           String   @id @default(uuid())
+  campaignId   String
+  status       String   @default("active") // active | ended
+  round        Int      @default(1)
+  currentTurn  Int      @default(0)
+  participants String   // JSON array
+  initiativeOrder String // JSON array of participant ids
+  startedAt    DateTime @default(now())
+  endedAt      DateTime?
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+}
+
+// ─── Assets ────────────────────────────────────────────────────────────────
+
+model Asset {
+  id              String   @id @default(uuid())
+  campaignId      String
+  characterId     String?
+  locationId      String?
+  npcId           String?
+  ownerDiscordId  String?
+  assetType       String   // character_portrait | location | npc_portrait | item
+  prompt          String
+  negativePrompt  String   @default("")
+  imageUrl        String?
+  localPath       String?
+  provider        String
+  providerMeta    String   @default("{}")
+  styleProfileId  String?
+  version         Int      @default(1)
+  isActive        Boolean  @default(true)
+  changeSummary   String   @default("")
+  createdAt       DateTime @default(now())
+
+  campaign  Campaign   @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  character Character? @relation(fields: [characterId], references: [id])
+  location  Location?  @relation(fields: [locationId], references: [id])
+
+  @@index([campaignId, assetType, isActive])
+  @@index([characterId])
+  @@index([locationId])
+}
+
+model VisualStyleProfile {
+  id              String   @id @default(uuid())
+  campaignId      String   @unique
+  artStyle        String   @default("dark fantasy painterly cinematic illustration")
+  cameraFraming   String   @default("medium shot, readable silhouettes")
+  colorPalette    String   @default("muted earth tones, deep crimson accents, cold blue shadows")
+  lightingMood    String   @default("dramatic chiaroscuro, rain-slick reflections")
+  fantasyTone     String   @default("grounded medieval fantasy, political intrigue")
+  realismLevel    String   @default("stylized realism")
+  aspectRatio     String   @default("1:1")
+  negativePrompt  String   @default("text, watermark, UI, modern objects, logos, blurry")
+  consistencyRules String  @default("maintain visual identity across versions")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+}
+
+// ─── Rules Data (SRD-compatible, data-driven) ──────────────────────────────
+
+model RulesRace {
+  id          String @id @default(uuid())
+  key         String @unique
+  name        String
+  speed       Int    @default(30)
+  size        String @default("Medium")
+  traits      String @default("[]")
+  abilityBonuses String @default("{}")
+  languages   String @default("[]")
+  isHomebrew  Boolean @default(false)
+}
+
+model RulesClass {
+  id           String @id @default(uuid())
+  key          String @unique
+  name         String
+  hitDie       String
+  primaryAbility String
+  savingThrows String @default("[]")
+  skillChoices String @default("{}")
+  features     String @default("[]")
+  spellcasting String?
+  isHomebrew   Boolean @default(false)
+}
+
+model RulesBackground {
+  id          String @id @default(uuid())
+  key         String @unique
+  name        String
+  skillProficiencies String @default("[]")
+  features    String @default("[]")
+  equipment   String @default("[]")
+  isHomebrew  Boolean @default(false)
+}
+
+// Optional: run migration as DB owner to enable DB-backed spell catalog
+model RulesSpell {
+  id           String @id @default(uuid())
+  key          String @unique
+  name         String
+  level        Int    // 0 = cantrip
+  school       String
+  castingTime  String
+  range        String
+  components   String
+  duration     String
+  description  String
+  classes      String @default("[]") // JSON class keys that can learn this
+  ritual       Boolean @default(false)
+  isHomebrew   Boolean @default(false)
+
+  @@index([level])
+}
+
+model RulesSkill {
+  id       String @id @default(uuid())
+  key      String @unique
+  name     String
+  ability  String
+}
+
+model RulesCondition {
+  id          String @id @default(uuid())
+  key         String @unique
+  name        String
+  description String
+}

@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: discord-ai-dm-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: discord_ai_dm
+      POSTGRES_PASSWORD: discord_ai_dm_dev
+      POSTGRES_DB: discord_ai_dm
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U discord_ai_dm -d discord_ai_dm']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  postgres_data:

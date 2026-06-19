@@ -1,0 +1,53 @@
+{
+  "name": "discord-ai-dm",
+  "version": "0.1.0",
+  "description": "Discord AI Dungeon Master bot with persistent campaign memory",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:migrate:deploy": "prisma migrate deploy",
+    "db:push": "prisma db push",
+    "db:seed": "tsx prisma/seed/index.ts",
+    "db:studio": "prisma studio",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f postgres",
+    "setup": "tsx scripts/setup-supabase.ts",
+    "setup:docker": "tsx scripts/setup-local.ts -- --docker",
+    "db:verify": "tsx scripts/verify-db.ts",
+    "db:setup": "prisma migrate deploy && npm run db:seed",
+    "register-commands": "tsx scripts/register-commands.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:demo": "tsx scripts/demo-campaign-loop.ts",
+    "lint": "eslint src --ext .ts",
+    "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\""
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.5.0",
+    "@supabase/supabase-js": "^2.49.1",
+    "discord.js": "^14.18.0",
+    "dotenv": "^16.4.7",
+    "openai": "^4.86.2",
+    "uuid": "^11.1.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "@types/uuid": "^10.0.0",
+    "eslint": "^9.22.0",
+    "prettier": "^3.5.3",
+    "prisma": "^6.5.0",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2",
+    "vitest": "^3.0.8"
+  }
+}

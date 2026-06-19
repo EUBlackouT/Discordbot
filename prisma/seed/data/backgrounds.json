@@ -1,0 +1,8 @@
+[
+  { "key": "acolyte", "name": "Acolyte", "skillProficiencies": ["Insight", "Religion"], "features": ["Shelter of the Faithful"], "equipment": ["Holy symbol", "Prayer book", "Incense", "Common clothes", "15 gp"] },
+  { "key": "criminal", "name": "Criminal", "skillProficiencies": ["Deception", "Stealth"], "features": ["Criminal Contact"], "equipment": ["Crowbar", "Dark common clothes", "15 gp"] },
+  { "key": "folk_hero", "name": "Folk Hero", "skillProficiencies": ["Animal Handling", "Survival"], "features": ["Rustic Hospitality"], "equipment": ["Artisan tools", "Shovel", "Iron pot", "Common clothes", "10 gp"] },
+  { "key": "noble", "name": "Noble", "skillProficiencies": ["History", "Persuasion"], "features": ["Position of Privilege"], "equipment": ["Fine clothes", "Signet ring", "Scroll of pedigree", "25 gp"] },
+  { "key": "sage", "name": "Sage", "skillProficiencies": ["Arcana", "History"], "features": ["Researcher"], "equipment": ["Ink", "Quill", "Small knife", "Letter from colleague", "Common clothes", "10 gp"] },
+  { "key": "soldier", "name": "Soldier", "skillProficiencies": ["Athletics", "Intimidation"], "features": ["Military Rank"], "equipment": ["Insignia of rank", "Trophy", "Dice or cards", "Common clothes", "10 gp"] }
+]
