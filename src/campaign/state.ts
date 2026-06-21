@@ -1,6 +1,11 @@
 import { prisma } from '../db/client.js';
 import { parseJson, toJson } from '../utils/helpers.js';
-import { ensureChronicle, deleteChronicle } from '../dm/chronicle/campaign-chronicle.js';
+import { logger } from '../utils/logger.js';
+import { ensureChronicle, deleteChronicle, readChronicle, parsePlotDirectorFromChronicle } from '../dm/chronicle/campaign-chronicle.js';
+import { summarizeSpellsForAI } from '../game/character/spell-reference.js';
+import type { CombatParticipant } from '../game/combat/combat-service.js';
+import { formatCombatStatus, parseCombatMeta } from '../game/combat/combat-service.js';
+import { summarizeParticipantForAI } from '../game/combat/combat-ai-context.js';
 import { ensureGuild, assertGuildCanStartCampaign } from '../tenant/guild-service.js';
 import {
   DEFAULT_CAMPAIGN_NAME,
@@ -14,6 +19,10 @@ import {
   buildOpeningNarration,
   buildOpeningSceneContent,
 } from './intro.js';
+import type { PlotThread } from '../validation/schemas.js';
+import { assignVoicesForCampaign } from '../voice/npc-voice-service.js';
+import { warmAmbienceForLocation } from '../voice/ambience-cache.js';
+import { buildAmbienceContext } from '../voice/ambience-context.js';
 
 export interface CampaignStatePacket {
   campaign: {
@@ -22,6 +31,8 @@ export interface CampaignStatePacket {
     sessionSummary: string;
     dangerLevel: number;
     openThreads: string[];
+    plotThreads: PlotThread[];
+    campaignThroughline: string;
     currentSceneId: string | null;
     currentLocationId: string | null;
   };
@@ -29,6 +40,7 @@ export interface CampaignStatePacket {
   location: {
     id: string;
     name: string;
+    slug: string;
     description: string;
     visualDescription: string;
     mood: string;
@@ -44,14 +56,71 @@ export interface CampaignStatePacket {
     maxHitPoints: number;
     conditions: string[];
     appearance: string;
+    cantrips: string[];
+    preparedSpells: string[];
+    spellSlots: Record<string, number>;
+    currentLocationId: string | null;
+    currentLocationName: string | null;
   }>;
-  activeNpcs: Array<{ id: string; name: string; description: string; attitude: string; goals: string }>;
+  /** Per-PC positions for multiplayer POV */
+  partyPositions: PartyPosition[];
+  /** Lookup for resolving acting player's locale */
+  locationsById: Record<
+    string,
+    {
+      id: string;
+      name: string;
+      slug: string;
+      description: string;
+      visualDescription: string;
+      mood: string;
+      activeAssetId: string | null;
+      currentChanges: string;
+    }
+  >;
+  activeNpcs: Array<{
+    id: string;
+    name: string;
+    description: string;
+    attitude: string;
+    goals: string;
+    locationId: string | null;
+    elevenLabsVoiceId: string;
+    voiceLabel: string;
+  }>;
   activeQuest: { id: string; title: string; description: string; objectives: string[] } | null;
   publicMemories: string[];
   hiddenMemories: string[];
-  recentTurns: Array<{ message: string; response: string | null; discordId: string }>;
+  recentTurns: Array<{ message: string; response: string | null; discordId: string; characterName: string | null }>;
   pendingChecks: Array<{ id: string; skill: string | null; ability: string; dc: number; targetDiscordId: string }>;
-  combat: { id: string; round: number; currentTurn: number; status: string } | null;
+  combat: {
+    id: string;
+    round: number;
+    currentTurn: number;
+    status: string;
+    currentTurnName: string | null;
+    reinforcementsArrived: string[];
+    summary: string;
+    locationId: string | null;
+    locationName: string | null;
+    /** Party members not in this fight (elsewhere on the map) */
+    absentParty: string[];
+    participants: Array<{
+      id: string;
+      name: string;
+      type: string;
+      hp: number;
+      maxHp: number;
+      ac: number;
+      isDefeated: boolean;
+      isUnconscious: boolean;
+      concentratingOn: string | null;
+      conditions: string[];
+      spellSlotsRemaining: Record<string, number> | null;
+      deathSaveSuccesses: number | null;
+      deathSaveFailures: number | null;
+    }>;
+  } | null;
   visualStyle: Record<string, string> | null;
 }
 
@@ -76,8 +145,8 @@ export async function startCampaign(guildId: string, channelId: string, name?: s
     data: {
       guildId,
       name: name ?? DEFAULT_CAMPAIGN_NAME,
-      sessionSummary: 'The campaign begins in Mistharbor during a public execution gone wrong.',
-      openThreads: toJson(['Why did the prisoner vanish?', 'What does the pale sigil mean?']),
+      sessionSummary: 'The campaign begins.',
+      openThreads: toJson([]),
       imageAutoGenerate: false,
     },
   });
@@ -173,7 +242,30 @@ export async function startCampaign(guildId: string, channelId: string, name?: s
   await ensureChronicle(
     campaign.id,
     campaign.name,
-    'The party is at the Mistharbor execution yard. A prisoner vanished from the scaffold; riot and panic spread. Old Henrick fled toward the old quarter.',
+    'The campaign begins at the Mistharbor execution yard during a state hanging of a condemned spy. The crowd — including the party — came to watch. The prisoner vanished from the scaffold in a pale sky sigil; witnesses in the front ranks are being blamed.',
+  );
+
+  void assignVoicesForCampaign(campaign.id).catch((err) => {
+    logger.warn('Intro NPC voice casting failed', err);
+  });
+
+  warmAmbienceForLocation(
+    campaign.id,
+    buildAmbienceContext(
+      {
+        location: {
+          id: location.id,
+          name: location.name,
+          slug: location.slug,
+          description: location.description,
+          visualDescription: location.visualDescription,
+          mood: location.mood,
+          currentChanges: location.currentChanges,
+        },
+        scene: { mood: INTRO_SCENE.mood },
+      },
+      location.slug,
+    ),
   );
 
   return {
@@ -212,6 +304,47 @@ export async function buildStatePacket(campaignId: string): Promise<CampaignStat
 
   const primaryQuest = quests.find((q) => q.isPrimary) ?? quests[0] ?? null;
 
+  const locationIdSet = new Set<string>();
+  if (campaign.currentLocationId) locationIdSet.add(campaign.currentLocationId);
+  for (const m of members) {
+    if (m.character.currentLocationId) locationIdSet.add(m.character.currentLocationId);
+  }
+
+  const allLocations = locationIdSet.size
+    ? await prisma.location.findMany({ where: { id: { in: [...locationIdSet] } } })
+    : [];
+  const locationsById: CampaignStatePacket['locationsById'] = {};
+  for (const loc of allLocations) {
+    locationsById[loc.id] = {
+      id: loc.id,
+      name: loc.name,
+      slug: loc.slug,
+      description: loc.description,
+      visualDescription: loc.visualDescription,
+      mood: loc.mood,
+      activeAssetId: loc.activeAssetId,
+      currentChanges: loc.currentChanges,
+    };
+  }
+
+  const defaultLocId = campaign.currentLocationId;
+  const partyPositions: PartyPosition[] = members
+    .filter((m) => m.character.isComplete && m.character.isActive)
+    .map((m) => {
+      const locId = m.character.currentLocationId ?? defaultLocId;
+      const loc = locId ? locationsById[locId] : null;
+      return {
+        characterId: m.character.id,
+        discordId: m.discordId,
+        name: m.character.name,
+        locationId: locId,
+        locationName: loc?.name ?? null,
+      };
+    });
+
+  const discordToName = new Map(members.map((m) => [m.discordId, m.character.name]));
+  const plotDirector = parsePlotDirectorFromChronicle(await readChronicle(campaignId));
+
   return {
     campaign: {
       id: campaign.id,
@@ -219,6 +352,8 @@ export async function buildStatePacket(campaignId: string): Promise<CampaignStat
       sessionSummary: campaign.sessionSummary,
       dangerLevel: campaign.dangerLevel,
       openThreads: parseJson<string[]>(campaign.openThreads, []),
+      plotThreads: plotDirector.plotThreads,
+      campaignThroughline: plotDirector.campaignThroughline,
       currentSceneId: campaign.currentSceneId,
       currentLocationId: campaign.currentLocationId,
     },
@@ -229,6 +364,7 @@ export async function buildStatePacket(campaignId: string): Promise<CampaignStat
       ? {
           id: location.id,
           name: location.name,
+          slug: location.slug,
           description: location.description,
           visualDescription: location.visualDescription,
           mood: location.mood,
@@ -239,22 +375,37 @@ export async function buildStatePacket(campaignId: string): Promise<CampaignStat
     activeCharacters: members
       .filter((m) => m.character.isComplete && m.character.isActive)
       .map((m) => m.character)
-      .map((c) => ({
-      id: c.id,
-      name: c.name,
-      race: c.race,
-      className: c.className,
-      hitPoints: c.hitPoints,
-      maxHitPoints: c.maxHitPoints,
-      conditions: parseJson<string[]>(c.conditions, []),
-      appearance: c.appearance,
-    })),
+      .map((c) => {
+        const spells = summarizeSpellsForAI(c.spellcasting);
+        const locId = c.currentLocationId ?? defaultLocId;
+        const loc = locId ? locationsById[locId] : null;
+        return {
+          id: c.id,
+          name: c.name,
+          race: c.race,
+          className: c.className,
+          hitPoints: c.hitPoints,
+          maxHitPoints: c.maxHitPoints,
+          conditions: parseJson<string[]>(c.conditions, []),
+          appearance: c.appearance,
+          cantrips: spells.cantrips,
+          preparedSpells: spells.prepared,
+          spellSlots: spells.slots,
+          currentLocationId: locId,
+          currentLocationName: loc?.name ?? null,
+        };
+      }),
+    partyPositions,
+    locationsById,
     activeNpcs: npcs.map((n) => ({
       id: n.id,
       name: n.name,
       description: n.description,
       attitude: n.attitude,
       goals: n.goals,
+      locationId: n.locationId,
+      elevenLabsVoiceId: n.elevenLabsVoiceId,
+      voiceLabel: n.voiceLabel,
     })),
     activeQuest: primaryQuest
       ? {
@@ -270,6 +421,7 @@ export async function buildStatePacket(campaignId: string): Promise<CampaignStat
       message: t.message,
       response: t.response,
       discordId: t.discordId,
+      characterName: discordToName.get(t.discordId) ?? null,
     })),
     pendingChecks: pendingChecks.map((p) => ({
       id: p.id,
@@ -279,7 +431,23 @@ export async function buildStatePacket(campaignId: string): Promise<CampaignStat
       targetDiscordId: p.targetDiscordId,
     })),
     combat: combat
-      ? { id: combat.id, round: combat.round, currentTurn: combat.currentTurn, status: combat.status }
+      ? (() => {
+          const participants = parseJson<CombatParticipant[]>(combat.participants, []);
+          const meta = parseCombatMeta(combat.initiativeOrder);
+          return {
+            id: combat.id,
+            round: combat.round,
+            currentTurn: combat.currentTurn,
+            status: combat.status,
+            participants: participants.map((p) => summarizeParticipantForAI(p)),
+            currentTurnName: participants[combat.currentTurn]?.name ?? null,
+            reinforcementsArrived: meta.reinforcementsArrived,
+            locationId: meta.locationId ?? null,
+            locationName: meta.locationName ?? null,
+            absentParty: meta.absentParty ?? [],
+            summary: formatCombatStatus(participants, combat.round, combat.currentTurn),
+          };
+        })()
       : null,
     visualStyle: style
       ? {

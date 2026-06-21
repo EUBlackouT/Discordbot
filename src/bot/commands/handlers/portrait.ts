@@ -1,7 +1,7 @@
 import { SlashCommandBuilder } from 'discord.js';
 import type { CommandHandler } from '../index.js';
 import { getCampaignByChannel } from '../../../campaign/state.js';
-import { getCharactersForPlayer } from '../../../game/character/service.js';
+import { getCharactersForPlayer, updateCharacterAppearance } from '../../../game/character/service.js';
 import { assetManager } from '../../../core/campaign-loop.js';
 import { prisma } from '../../../db/client.js';
 
@@ -20,6 +20,18 @@ export const generateCmd: CommandHandler = {
         .setName('view')
         .setDescription('View character portrait')
         .addStringOption((o) => o.setName('name').setDescription('Character name').setRequired(true)),
+    )
+    .addSubcommand((s) =>
+      s
+        .setName('appearance')
+        .setDescription('Set how your character looks, then generate a personalized portrait')
+        .addStringOption((o) => o.setName('name').setDescription('Character name').setRequired(true))
+        .addStringOption((o) =>
+          o
+            .setName('look')
+            .setDescription('Brief visual description (face, build, hair, clothing, colors…)')
+            .setRequired(true),
+        ),
     )
     .addSubcommand((s) =>
       s
@@ -42,6 +54,30 @@ export const generateCmd: CommandHandler = {
 
     if (!character) {
       await interaction.reply({ content: `Character "${name}" not found.`, ephemeral: true });
+      return;
+    }
+
+    if (sub === 'appearance') {
+      const look = interaction.options.getString('look', true);
+      await interaction.deferReply({ ephemeral: true });
+      try {
+        const campaignId = campaign?.id ?? character.campaignId;
+        if (!campaignId) {
+          await interaction.editReply('Join a campaign first, or start one with `/campaign start`.');
+          return;
+        }
+        await updateCharacterAppearance(character.id, look);
+        const result = await assetManager.generateCharacterPortrait(
+          character.id,
+          campaignId,
+          interaction.user.id,
+        );
+        await interaction.editReply(
+          `Appearance saved for **${character.name}**.\nPortrait v${result.version} generated from your description.\n${result.localPath ? `File: \`${result.localPath}\`` : ''}`,
+        );
+      } catch (err) {
+        await interaction.editReply(`Error: ${(err as Error).message}`);
+      }
       return;
     }
 

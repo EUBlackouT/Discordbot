@@ -27,6 +27,7 @@ export const INTRO_SCENE = {
 export const INTRO_NPCS = [
   {
     name: 'Captain Mira Thornvale',
+    gender: 'female' as const,
     description: 'Hard-faced city watch captain with a scarred jaw and iron discipline.',
     visualDescription: 'Middle-aged woman, short grey-streaked hair, scarred jaw, dark watch tabard with silver pins, rain on her cloak.',
     goals: 'Restore order, find the vanished prisoner, satisfy the Council.',
@@ -35,6 +36,7 @@ export const INTRO_NPCS = [
   },
   {
     name: 'Sister Caldra Venn',
+    gender: 'female' as const,
     description: 'A hooded acolyte of the Tidebound faith who grabs the nearest strangers.',
     visualDescription: 'Young woman in sea-green robes, hood half-back, ink-stained fingers, anxious eyes.',
     goals: 'Protect innocents from mob violence, decode the sky sigil.',
@@ -43,6 +45,7 @@ export const INTRO_NPCS = [
   },
   {
     name: 'Old Henrick the Crier',
+    gender: 'male' as const,
     description: 'The town crier who was reading the prisoner\'s crimes when the omen struck.',
     visualDescription: 'Elderly man, bald, booming voice gone hoarse, tattered herald coat, clutching a broken bell.',
     goals: 'Survive the riot, sell information to whoever pays.',
@@ -116,19 +119,117 @@ function formatPartyInCrowd(names: string[]): string {
   return `${lead}, and **${names[names.length - 1]}** are packed in with the rest`;
 }
 
+export interface OpeningVoiceSegment {
+  kind: 'narrator' | 'npc';
+  text: string;
+  npcName?: string;
+  attitude?: string;
+  /** Silence after this clip when stitching the intro (milliseconds). */
+  pauseAfterMs?: number;
+}
+
+function formatPartyInCrowdSpeech(names: string[]): string {
+  if (names.length === 0) return 'You are packed in with strangers and dockhands';
+  if (names.length === 1) return `${names[0]} is packed in with strangers and dockhands`;
+  if (names.length === 2) return `${names[0]} and ${names[1]} are packed in with the rest`;
+  const lead = names.slice(0, -1).join(', ');
+  return `${lead}, and ${names[names.length - 1]} are packed in with the rest`;
+}
+
+/** Scripted intro for multi-voice VC playback (Chronicler + NPC lines). */
+export function buildOpeningVoiceScript(party?: OpeningPartyContext): OpeningVoiceSegment[] {
+  const crowd = formatPartyInCrowdSpeech(party?.partyNames ?? []);
+
+  return [
+    {
+      kind: 'narrator',
+      text:
+        `Mistharbor clings to black cliffs above a churning harbor — a port city ruled by merchant-lords who call public hangings justice and call silence loyalty. ` +
+        `Tonight the square below the seawall is packed: dockhands, fishwives, off-duty sailors, and strangers who came to see a spy die. ` +
+        `${crowd} under a row of iron gibbets, close enough to smell wet rope and the tar they use on the scaffold.`,
+      pauseAfterMs: 750,
+    },
+    {
+      kind: 'narrator',
+      text:
+        `The condemned stands hooded on the wooden platform, wrists locked in iron. Old Henrick the crier sways on his step below, voice raw from shouting the prisoner's crimes into the rain — ` +
+        `treason against the Council, smuggling names across the border, sins the crowd was meant to hear before the drop. His bell hangs cracked at his hip. He keeps one thumb over a line on the parchment, as if afraid the next word might burn.`,
+      pauseAfterMs: 900,
+    },
+    {
+      kind: 'narrator',
+      text: 'Then Henrick stops mid-sentence.',
+      pauseAfterMs: 1200,
+    },
+    {
+      kind: 'narrator',
+      text:
+        `The hooded figure vanishes. Not a fall — not a trick of the rope — simply gone. Manacles clang empty on the boards and smoke curls from them like breath in winter. ` +
+        `A beat of silence, then the square detonates: screams, shoving, someone retching against the stones.`,
+      pauseAfterMs: 850,
+    },
+    {
+      kind: 'narrator',
+      text:
+        `Pale fire tears across the belly of the clouds — a sigil no priest claims, sharp enough to leave salt behind your eyes. ` +
+        `Everyone who looked up feels branded. You see the same ghost-light reflected on the faces pressed around you.`,
+      pauseAfterMs: 750,
+    },
+    {
+      kind: 'narrator',
+      text:
+        `Captain Mira Thornvale of the city watch drives her horse into the riot, tabard dark with rain. She does not look surprised.`,
+      pauseAfterMs: 850,
+    },
+    {
+      kind: 'npc',
+      npcName: 'Captain Mira Thornvale',
+      attitude: 'commanding',
+      text: 'Witchcraft in the front ranks! Clear that section — seize the whole knot of them!',
+      pauseAfterMs: 550,
+    },
+    {
+      kind: 'narrator',
+      text:
+        `Sister Caldra Venn fights through in sea-green robes, ink staining her fingers, hood half-back. She grabs the nearest shoulders — maybe yours.`,
+      pauseAfterMs: 850,
+    },
+    {
+      kind: 'npc',
+      npcName: 'Sister Caldra Venn',
+      attitude: 'desperate',
+      text: '[urgently] You saw it too. [whispers] The seaward alleys still breathe — move together, or they\'ll pick us off one by one.',
+      pauseAfterMs: 600,
+    },
+    {
+      kind: 'narrator',
+      text:
+        `Henrick's bell finally hits the cobbles. He turns his herald's coat inside-out and slides backward into the mob, lips still shaping a name he was paid not to read aloud. ` +
+        `Behind you, the yard gates begin to grind shut. Someone on the gibbets is already testing rope for a scapegoat.`,
+    },
+  ];
+}
+
 export function buildOpeningSceneContent(party?: OpeningPartyContext): OpeningSceneContent {
   const crowd = formatPartyInCrowd(party?.partyNames ?? []);
 
   const narrative =
-    `*Rain hammers the cobbles. The crowd came to watch a hanging.*\n\n` +
-    `**Old Henrick the crier** was midway through the spy's crimes — voice hoarse, bell sagging in the wet — when the words simply stop. ` +
-    `${crowd}, close enough to smell iron and rope.\n\n` +
-    `The blade never drops. Pale fire scratches the clouds and the prisoner is **gone**. Empty manacles smoke on the scaffold. ` +
-    `Henrick's bell clatters once against the stones. He turns his herald's coat inside-out and melts backward into the mob, lips still shaping a name he never spoke aloud.\n\n` +
-    `The sigil flares again. Everyone who looked up feels it — salt behind the eyes — and sees the same ghost-light on the faces pressed around them.\n\n` +
-    `Captain **Mira Thornvale** rides the panic like she expected it. *"Witchcraft in the front ranks. Clear that section — take the whole knot of them!"*\n\n` +
-    `**Sister Caldra Venn** claws through in sea-green robes, ink on her fingers. *"The seaward alleys still breathe. Don't let them split you up."*\n\n` +
-    `Behind her, the gates grind. Someone on the gibbets is already testing rope.`;
+    `**Mistharbor** clings to black cliffs above a churning harbor — a port city ruled by merchant-lords who call public hangings *justice* and call silence *loyalty*. ` +
+    `Tonight the square below the seawall is packed: dockhands, fishwives, off-duty sailors, and strangers who came to see a spy die. ` +
+    `${crowd} under a row of iron gibbets, close enough to smell wet rope and the tar they use on the scaffold.\n\n` +
+    `The condemned stands hooded on the wooden platform, wrists locked in iron. **Old Henrick the crier** sways on his step below, voice raw from shouting the prisoner's crimes into the rain — ` +
+    `treason against the Council, smuggling names across the border, sins the crowd was *meant* to hear before the drop. His bell hangs cracked at his hip. He keeps one thumb over a line on the parchment, as if afraid the next word might burn.\n\n` +
+    `Then Henrick stops mid-sentence.\n\n` +
+    `The hooded figure **vanishes**. Not a fall — not a trick of the rope — simply gone. Manacles clang empty on the boards and smoke curls from them like breath in winter. ` +
+    `A beat of silence, then the square detonates: screams, shoving, someone retching against the stones.\n\n` +
+    `Pale fire tears across the belly of the clouds — a sigil no priest claims, sharp enough to leave salt behind your eyes. ` +
+    `Everyone who looked up feels branded. You see the same ghost-light reflected on the faces pressed around you.\n\n` +
+    `Captain **Mira Thornvale** of the city watch drives her horse into the riot, tabard dark with rain. She does not look surprised. ` +
+    `*"Witchcraft in the front ranks. Clear that section — seize the whole knot of them!"*\n\n` +
+    `**Sister Caldra Venn** fights through in sea-green robes, ink staining her fingers, hood half-back. She grabs the nearest shoulders — maybe yours. ` +
+    `*"You saw it too. The seaward alleys still breathe — move together, or they'll pick us off one by one."*\n\n` +
+    `Henrick's bell finally hits the cobbles. He turns his herald's coat inside-out and slides backward into the mob, lips still shaping a name he was paid *not* to read aloud.\n\n` +
+    `Behind you, the yard gates begin to grind shut. Someone on the gibbets is already testing rope for a scapegoat.`;
 
   return {
     locationName: INTRO_LOCATION.name,

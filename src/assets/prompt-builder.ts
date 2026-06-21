@@ -30,6 +30,35 @@ export interface LocationPromptInput {
   previousPrompt?: string;
 }
 
+export interface NpcPortraitPromptInput {
+  name: string;
+  appearance: string;
+  attitude?: string;
+  styleProfile: StyleProfile;
+  mood?: string;
+}
+
+export function buildNpcPortraitPrompt(input: NpcPortraitPromptInput): {
+  prompt: string;
+  negativePrompt: string;
+} {
+  const prompt = [
+    'NPC character portrait, head and shoulders framing',
+    input.name,
+    input.appearance,
+    input.attitude ? `Demeanor: ${input.attitude}` : '',
+    input.mood ? `Expression/mood: ${input.mood}` : '',
+    `Art style: ${input.styleProfile.artStyle}`,
+    `Color palette: ${input.styleProfile.colorPalette}`,
+    `Lighting: ${input.styleProfile.lightingMood}`,
+    'Medieval fantasy, no text, no watermark, no UI elements',
+  ]
+    .filter(Boolean)
+    .join('. ');
+
+  return { prompt, negativePrompt: input.styleProfile.negativePrompt };
+}
+
 export function buildCharacterPortraitPrompt(input: CharacterPromptInput): {
   prompt: string;
   negativePrompt: string;

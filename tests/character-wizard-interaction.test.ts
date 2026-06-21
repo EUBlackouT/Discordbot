@@ -55,6 +55,11 @@ describe('wizard interaction ack routing', () => {
     expect(wizardShouldDeferFirst(ix as never, ix.customId)).toBe(true);
   });
 
+  it('defers appearance modal submit for review step', () => {
+    const ix = mockModal('char_wiz_appearance_modal');
+    expect(wizardShouldDeferFirst(ix as never, ix.customId)).toBe(true);
+  });
+
   it('defers name modal submit for review step', () => {
     const ix = mockModal('char_wiz_name__p_flaw_0');
     expect(wizardShouldDeferFirst(ix as never, ix.customId)).toBe(true);

@@ -18,6 +18,7 @@ import {
   getCharacterDraft,
   upsertCharacterDraft,
   finalizeCharacter,
+  buildCharacterPreviewFromDraft,
 } from '../../../game/character/service.js';
 import { loadRulesData, getSpellsForClass, getClassDefinition } from '../../../game/rules/loader.js';
 import { parseJson, STANDARD_ARRAY, ABILITIES, type Ability } from '../../../utils/helpers.js';
@@ -34,8 +35,8 @@ import {
 } from '../../../game/character/draft-types.js';
 import { SRD_RACES } from '../../../game/rules/srd-data.js';
 import { validatePointBuy as validatePointBuyScores } from '../../../game/character/creator.js';
-import { APPEARANCE_QUESTIONS } from '../../../game/character/creator.js';
 import { buildCharacterCreatedEmbed, buildGettingStartedEmbed } from '../../onboarding.js';
+import { buildCharacterSheetEmbeds } from '../../../game/character/sheet-display.js';
 import { isRenderableImagePath } from '../../campaign-reply.js';
 import { assetManager } from '../../../core/campaign-loop.js';
 import { getCampaignByChannel } from '../../../campaign/state.js';
@@ -253,7 +254,7 @@ export async function handleCharacterWizardComponent(interaction: Interaction): 
   if (!interaction.isStringSelectMenu() && !interaction.isModalSubmit() && !interaction.isButton()) return false;
 
   const id = interaction.customId;
-  if (!id.startsWith('char_wiz_') && id !== 'char_finalize' && id !== 'char_appearance_skip') return false;
+  if (!id.startsWith('char_wiz_') && id !== 'char_finalize') return false;
 
   const guildId = interaction.guildId;
 
@@ -271,6 +272,11 @@ export async function handleCharacterWizardComponent(interaction: Interaction): 
 
   if (interaction.isButton() && id === 'char_wiz_name_btn') {
     await interaction.showModal(buildNameModal());
+    return true;
+  }
+
+  if (interaction.isButton() && id === 'char_wiz_appearance_btn') {
+    await interaction.showModal(buildAppearanceModal());
     return true;
   }
 
@@ -587,12 +593,27 @@ export async function handleCharacterWizardComponent(interaction: Interaction): 
       const flawRef = id.slice('char_wiz_name__'.length);
       data = { ...data, flaw: resolvePersonalityValue('flaw', flawRef, data) };
     }
-    data = { ...data, name: interaction.fields.getTextInputValue('name'), appearanceAnswers: {}, appearanceIndex: 0 };
+    data = { ...data, name: interaction.fields.getTextInputValue('name'), appearanceAnswers: data.appearanceAnswers ?? {}, appearanceIndex: 0 };
+    await save(guildId, interaction.user.id, 'appearance', data, campaign?.id);
+    return renderAppearanceStep(interaction, data);
+  }
+
+  if (interaction.isModalSubmit() && id === 'char_wiz_appearance_modal') {
+    const look = interaction.fields.getTextInputValue('look').trim();
+    data = {
+      ...data,
+      appearanceAnswers: { ...(data.appearanceAnswers ?? {}), look },
+    };
     await save(guildId, interaction.user.id, 'review', data, campaign?.id);
     return renderReview(interaction, data);
   }
 
-  if (interaction.isButton() && (id === 'char_wiz_finalize' || id === 'char_finalize' || id === 'char_appearance_skip')) {
+  if (interaction.isButton() && id === 'char_wiz_appearance_skip') {
+    await save(guildId, interaction.user.id, 'review', data, campaign?.id);
+    return renderReview(interaction, data);
+  }
+
+  if (interaction.isButton() && (id === 'char_wiz_finalize' || id === 'char_finalize')) {
     try {
       await editWizardMessage(interaction, {
         embeds: [
@@ -612,6 +633,7 @@ export async function handleCharacterWizardComponent(interaction: Interaction): 
         campaign?.id,
       );
       const portraitReady = isRenderableImagePath(portrait?.localPath);
+      const sheetEmbeds = buildCharacterSheetEmbeds(character, portrait?.localPath);
       const payload: WizardMessagePayload = {
         embeds: [
           buildCharacterCreatedEmbed(character.name, {
@@ -619,6 +641,7 @@ export async function handleCharacterWizardComponent(interaction: Interaction): 
             className: character.className,
             portraitReady,
           }),
+          ...sheetEmbeds,
         ],
         components: [],
       };
@@ -907,10 +930,87 @@ async function renderPersonalityStep(interaction: StringSelectMenuInteraction, d
   return true;
 }
 
-async function renderReview(interaction: Interaction, data: CharacterDraftData) {
-  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId('char_wiz_finalize').setLabel('Create character').setStyle(ButtonStyle.Success));
+async function renderAppearanceStep(interaction: Interaction, data: CharacterDraftData) {
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId('char_wiz_appearance_btn')
+      .setLabel('Describe their look')
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId('char_wiz_appearance_skip')
+      .setLabel('Skip for now')
+      .setStyle(ButtonStyle.Secondary),
+  );
   await editWizardMessage(interaction, {
-    embeds: [new EmbedBuilder().setTitle(`Review — ${data.name}`).setDescription(`${data.race} ${data.className} · ${data.background}`)],
+    embeds: [
+      new EmbedBuilder()
+        .setTitle(`Appearance — ${data.name}`)
+        .setDescription(
+          '**How does your character look?** This drives your portrait art.\n\n' +
+            'Face, build, hair, clothing, colors, scars — a few vivid lines are enough. ' +
+            'You can regenerate later with `/portrait generate`.',
+        )
+        .setColor(0x4a0080),
+    ],
+    components: [row],
+  });
+  return true;
+}
+
+function buildAppearanceModal(): ModalBuilder {
+  return new ModalBuilder()
+    .setCustomId('char_wiz_appearance_modal')
+    .setTitle('Character appearance')
+    .addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId('look')
+          .setLabel('Describe your character\'s look')
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(true)
+          .setMaxLength(500)
+          .setPlaceholder('e.g. Broad-shouldered dwarf with copper braids, soot-stained leather apron, kind amber eyes, iron holy symbol at the neck…'),
+      ),
+    );
+}
+
+async function renderReview(interaction: Interaction, data: CharacterDraftData) {
+  const look = data.appearanceAnswers?.look?.trim();
+  const buttons = [
+    new ButtonBuilder().setCustomId('char_wiz_finalize').setLabel('Create character').setStyle(ButtonStyle.Success),
+  ];
+  if (!look) {
+    buttons.push(
+      new ButtonBuilder().setCustomId('char_wiz_appearance_btn').setLabel('Add appearance').setStyle(ButtonStyle.Secondary),
+    );
+  }
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(...buttons);
+
+  const preview = buildCharacterPreviewFromDraft(data);
+  const intro = new EmbedBuilder()
+    .setColor(0x4a0080)
+    .setTitle('Review your character')
+    .setDescription(
+      look
+        ? 'Your full sheet is below. When everything looks right, press **Create character**.'
+        : 'Your full sheet is below. You can **Add appearance** for a better portrait, or press **Create character** to finish.',
+    );
+
+  const embeds: EmbedBuilder[] = [intro];
+  if (preview) {
+    const sheetEmbeds = buildCharacterSheetEmbeds(preview);
+    embeds.push(...sheetEmbeds);
+  } else {
+    embeds.push(
+      new EmbedBuilder()
+        .setTitle(`Review — ${data.name ?? 'Unnamed'}`)
+        .setDescription(`${data.race} ${data.className} · ${data.background}`)
+        .setFooter({ text: 'Some sheet details could not be previewed — try completing earlier steps.' }),
+    );
+  }
+
+  await editWizardMessage(interaction, {
+    embeds,
     components: [row],
   });
   return true;

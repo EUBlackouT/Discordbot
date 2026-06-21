@@ -1,6 +1,10 @@
 import { prisma } from '../../db/client.js';
 import type { CampaignStatePacket } from '../../campaign/state.js';
+import { listCampaignParty } from '../../tenant/campaign-member.js';
 import { logger } from '../../utils/logger.js';
+import { createNpcWithVoice } from '../../voice/npc-voice-service.js';
+import { warmAmbienceForLocation } from '../../voice/ambience-cache.js';
+import { buildAmbienceContext } from '../../voice/ambience-context.js';
 
 function slugify(name: string): string {
   return name
@@ -66,6 +70,63 @@ async function applyOneUpdate(
       where: { id: campaignId },
       data: { currentLocationId: location.id },
     });
+
+    const party = await listCampaignParty(campaignId);
+    if (party.length > 0) {
+      await prisma.character.updateMany({
+        where: { id: { in: party.map((m) => m.characterId) } },
+        data: { currentLocationId: location.id },
+      });
+    }
+
+    warmAmbienceForLocation(
+      campaignId,
+      buildAmbienceContext(
+        {
+          location: {
+            id: location.id,
+            name: location.name,
+            slug: location.slug,
+            description: location.description,
+            visualDescription: location.visualDescription,
+            mood: location.mood,
+            currentChanges: location.currentChanges,
+          },
+          scene: context.scene,
+          combat: context.combat,
+        },
+        location.slug,
+        Boolean(context.combat),
+      ),
+    );
+    return;
+  }
+
+  if (type === 'set_character_location' || type === 'move_character') {
+    const characterId =
+      asString(raw.character_id) ?? asString(raw.characterId) ?? asString(raw.target_character_id);
+    const locationId =
+      asString(raw.location_id) ?? asString(raw.locationId) ?? context.location?.id;
+    const slug = asString(raw.slug);
+    const name = asString(raw.name);
+
+    let resolvedLocationId = locationId;
+    if (!resolvedLocationId && (slug || name)) {
+      const loc = await prisma.location.findFirst({
+        where: {
+          campaignId,
+          ...(slug ? { slug } : { name: name! }),
+        },
+      });
+      resolvedLocationId = loc?.id;
+    }
+
+    if (!characterId || !resolvedLocationId) return;
+
+    await prisma.character.update({
+      where: { id: characterId },
+      data: { currentLocationId: resolvedLocationId },
+    });
     return;
   }
 
@@ -104,6 +165,57 @@ async function applyOneUpdate(
     await prisma.campaign.update({
       where: { id: campaignId },
       data: { sessionSummary: summary },
+    });
+    return;
+  }
+
+  if (type === 'create_npc' || type === 'introduce_npc' || type === 'add_npc') {
+    const name = asString(raw.name);
+    if (!name) return;
+
+    const existing = await prisma.nPC.findFirst({ where: { campaignId, name } });
+    if (existing) return;
+
+    const locationId =
+      asString(raw.location_id) ??
+      asString(raw.locationId) ??
+      context.location?.id ??
+      context.campaign.currentLocationId ??
+      undefined;
+
+    await createNpcWithVoice(campaignId, {
+      name,
+      description: asString(raw.description) ?? '',
+      visualDescription: asString(raw.visual_description) ?? asString(raw.visualDescription) ?? '',
+      goals: asString(raw.goals) ?? '',
+      secrets: asString(raw.secrets) ?? '',
+      attitude: asString(raw.attitude) ?? 'neutral',
+      locationId: locationId ?? null,
+    });
+    return;
+  }
+
+  if (type === 'update_npc') {
+    const name = asString(raw.name);
+    if (!name) return;
+
+    const npc = await prisma.nPC.findFirst({ where: { campaignId, name } });
+    if (!npc) return;
+
+    const locationId =
+      asString(raw.location_id) ?? asString(raw.locationId) ?? undefined;
+
+    await prisma.nPC.update({
+      where: { id: npc.id },
+      data: {
+        description: asString(raw.description) ?? undefined,
+        visualDescription: asString(raw.visual_description) ?? asString(raw.visualDescription) ?? undefined,
+        goals: asString(raw.goals) ?? undefined,
+        secrets: asString(raw.secrets) ?? undefined,
+        attitude: asString(raw.attitude) ?? undefined,
+        locationId: locationId ?? undefined,
+        isActive: typeof raw.is_active === 'boolean' ? raw.is_active : undefined,
+      },
     });
   }
 }

@@ -92,21 +92,30 @@ function buildPlayerEmbed(
   return embed;
 }
 
-function buildChroniclerEmbed(
+const NPC_COLOR = 0x5c4033;
+
+function buildStoryEmbed(
   narration: string,
   options: {
     pendingCheck?: boolean;
+    checkPrompt?: { skill?: string | null; ability: string; dc: number };
+    rollSummary?: string;
     locationName?: string;
     rollResolved?: boolean;
     speakerName?: string;
     portraitAttachmentName?: string;
+    sceneAttachmentName?: string;
     briefReply?: boolean;
+    npcSpeaker?: boolean;
+    combatStatus?: string;
   },
 ): EmbedBuilder {
   const { lead, beats } = structureNarration(narration);
   const embed = new EmbedBuilder()
     .setDescription(lead || '…')
-    .setColor(options.pendingCheck ? 0xff6600 : CHRONICLER_COLOR);
+    .setColor(
+      options.pendingCheck ? 0xff6600 : options.npcSpeaker ? NPC_COLOR : CHRONICLER_COLOR,
+    );
 
   if (options.speakerName) {
     const author: { name: string; iconURL?: string } = { name: options.speakerName };
@@ -120,6 +129,24 @@ function buildChroniclerEmbed(
 
   if (options.portraitAttachmentName && !options.speakerName) {
     embed.setThumbnail(`attachment://${options.portraitAttachmentName}`);
+  } else if (options.portraitAttachmentName && options.npcSpeaker) {
+    embed.setThumbnail(`attachment://${options.portraitAttachmentName}`);
+  }
+
+  if (options.checkPrompt) {
+    const label = options.checkPrompt.skill ?? options.checkPrompt.ability;
+    embed.addFields({
+      name: '🎲 Check',
+      value: `**${label}** · DC **${options.checkPrompt.dc}**`,
+    });
+  }
+
+  if (options.combatStatus) {
+    embed.addFields({ name: '⚔️ Combat', value: options.combatStatus.slice(0, 1024) });
+  }
+
+  if (options.rollSummary) {
+    embed.addFields({ name: '🎲 Roll', value: options.rollSummary });
   }
 
   for (const [index, beat] of beats.entries()) {
@@ -134,14 +161,21 @@ function buildChroniclerEmbed(
     options.locationName ? `📍 ${options.locationName}` : null,
     options.pendingCheck
       ? 'Tap Roll when ready'
-      : options.rollResolved
-        ? 'The dice have spoken'
-        : options.briefReply
-          ? null
-          : 'What do you do?',
+      : options.combatStatus
+        ? 'Your turn — attack, cast a spell, or End Turn'
+        : options.rollResolved
+          ? 'The dice have spoken'
+          : options.briefReply || options.npcSpeaker
+            ? null
+            : 'What do you do?',
   ].filter(Boolean);
 
   embed.setFooter({ text: footerParts.join(' · ') });
+
+  if (options.sceneAttachmentName) {
+    embed.setImage(`attachment://${options.sceneAttachmentName}`);
+  }
+
   return embed;
 }
 
@@ -152,6 +186,7 @@ export function buildCampaignTurnReply(
   const embeds: EmbedBuilder[] = [];
   const files: AttachmentBuilder[] = [];
   let portraitName: string | undefined;
+  let npcPortraitName: string | undefined;
   let sceneName: string | undefined;
 
   const portraitPath = options.portraitPath ?? options.player?.portraitPath;
@@ -160,46 +195,64 @@ export function buildCampaignTurnReply(
     files.push(new AttachmentBuilder(portraitPath, { name: portraitName }));
   }
 
-  const showPlayerEmbed = options.player && !options.suppressPlayerEmbed;
-  if (showPlayerEmbed) {
-    embeds.push(buildPlayerEmbed(options.player!, portraitName));
+  if (isRenderableImagePath(result.npcPortraitPath)) {
+    npcPortraitName = `npc-portrait-${result.npcSpeaker?.replace(/\s+/g, '-').toLowerCase() ?? 'npc'}.png`;
+    files.push(new AttachmentBuilder(result.npcPortraitPath, { name: npcPortraitName }));
   }
 
-  embeds.push(
-    buildChroniclerEmbed(result.narration, {
-      pendingCheck: result.pendingCheck,
-      locationName: result.locationName,
-      rollResolved: result.rollResolved,
-      speakerName: options.suppressPlayerEmbed ? options.player?.characterName : undefined,
-      portraitAttachmentName: options.suppressPlayerEmbed ? portraitName : undefined,
-      briefReply: result.briefReply,
-    }),
-  );
+  const showPlayerEmbed = options.player && !options.suppressPlayerEmbed;
+  if (showPlayerEmbed) {
+    const playerCtx =
+      result.rollResolved && result.rollPlayerLine
+        ? { ...options.player!, action: result.rollPlayerLine }
+        : options.player!;
+    embeds.push(buildPlayerEmbed(playerCtx, portraitName));
+  }
 
   if (isRenderableImagePath(result.assetPath)) {
     sceneName = 'scene.png';
     files.push(new AttachmentBuilder(result.assetPath, { name: sceneName }));
   }
 
+  embeds.push(
+    buildStoryEmbed(result.narration, {
+      pendingCheck: result.pendingCheck,
+      checkPrompt: result.checkPrompt,
+      rollSummary: result.rollSummary,
+      locationName: result.locationName,
+      rollResolved: result.rollResolved,
+      combatStatus: result.combatStatus,
+      speakerName: result.npcSpeaker
+        ? result.npcSpeaker
+        : options.suppressPlayerEmbed
+          ? options.player?.characterName
+          : undefined,
+      portraitAttachmentName: options.suppressPlayerEmbed && !result.npcSpeaker ? portraitName : result.npcSpeaker ? npcPortraitName : undefined,
+      sceneAttachmentName: sceneName,
+      briefReply: result.briefReply,
+      npcSpeaker: Boolean(result.npcSpeaker),
+    }),
+  );
+
   const panels = result.panels ?? [];
-  for (const [index, panel] of panels.entries()) {
-    const isLocationPanel = panel.title?.includes('📍');
-    const attachSceneHere = Boolean(sceneName && isLocationPanel);
-    embeds.push(panelToEmbed(panel, attachSceneHere ? sceneName : undefined));
-    if (attachSceneHere) sceneName = undefined;
+  for (const panel of panels) {
+    embeds.push(panelToEmbed(panel));
   }
 
-  if (sceneName && result.assetPath) {
-    const sceneEmbed = new EmbedBuilder()
-      .setTitle('🖼️ Scene')
-      .setColor(CHRONICLER_COLOR)
-      .setImage(`attachment://${sceneName}`);
-    embeds.push(sceneEmbed);
+  const components: ActionRowBuilder<ButtonBuilder>[] = [];
+  if (result.pendingCheck) {
+    components.push(buildCheckRollRow());
+  } else if (result.combatActive) {
+    components.push(buildCombatActionRow());
   }
-
-  const components = result.pendingCheck ? [buildCheckRollRow()] : [];
 
   return { embeds: embeds.slice(0, 10), components, files };
+}
+
+export function buildCombatActionRow(): ActionRowBuilder<ButtonBuilder> {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId('combat_end_turn').setLabel('End Turn').setStyle(ButtonStyle.Secondary).setEmoji('⏭️'),
+  );
 }
 
 export function buildCheckRollRow(): ActionRowBuilder<ButtonBuilder> {

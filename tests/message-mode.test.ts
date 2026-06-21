@@ -17,6 +17,6 @@ describe('classifyMessageMode', () => {
     const limits = narrationLimitsForMode('observe');
     expect(limits.brief).toBe(true);
     expect(limits.maxParagraphs).toBe(1);
-    expect(limits.maxTokens).toBeLessThanOrEqual(150);
+    expect(limits.maxTokens).toBeLessThanOrEqual(120);
   });
 });

@@ -8,6 +8,7 @@ import { AssetManager, createImageService } from '../src/assets/asset-manager.js
 import { ensureGuildAssetCampaign } from '../src/tenant/guild-asset-campaign.js';
 
 const nameQuery = process.argv[2];
+const lookOverride = process.argv[3];
 if (!nameQuery) {
   console.error('Usage: npx tsx scripts/generate-portrait.ts "Character Name"');
   process.exit(1);
@@ -40,6 +41,12 @@ try {
 
   const campaignId =
     character.campaignId ?? (await ensureGuildAssetCampaign(character.guildId)).id;
+
+  if (lookOverride) {
+    const { updateCharacterAppearance } = await import('../src/game/character/service.js');
+    await updateCharacterAppearance(character.id, lookOverride);
+    console.log('Updated appearance from CLI argument.');
+  }
 
   console.log(`Generating portrait for ${character.name} (${character.race} ${character.className})…`);
 

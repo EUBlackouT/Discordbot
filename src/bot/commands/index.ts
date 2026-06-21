@@ -13,15 +13,17 @@ export interface CommandHandler {
   execute: (interaction: ChatInputCommandInteraction, client: Client) => Promise<void>;
 }
 
-import { createCmd as characterCmd, handleCharacterComponent } from './handlers/character.js';
+import { createCmd as characterCmd, handleCharacterComponent, handleCharacterAutocomplete } from './handlers/character.js';
 import {
   startCmd as campaignStartHandler,
   joinCmd as campaignJoinHandler,
   leaveCmd as campaignLeaveHandler,
   resetCmd as campaignResetHandler,
+  threadsCmd as campaignThreadsHandler,
 } from './handlers/campaign.js';
 import { rollCmd, checkCmd, saveCmd, initiativeCmd } from './handlers/dice.js';
 import { startCmd as combatCmd } from './handlers/combat.js';
+import { voiceCmd } from './handlers/voice.js';
 import { helpCmd } from './handlers/help.js';
 import { stateCmd as debugCmd } from './handlers/debug.js';
 
@@ -40,6 +42,11 @@ const campaignData = new SlashCommandBuilder()
   )
   .addSubcommand((s) => s.setName('leave').setDescription('Leave this campaign (or say it in chat)'))
   .addSubcommand((s) =>
+    s
+      .setName('threads')
+      .setDescription('Show main campaign focus and active progression beats (DM debug)'),
+  )
+  .addSubcommand((s) =>
     s.setName('reset').setDescription('Reset campaign (destructive)').addBooleanOption((o) => o.setName('confirm').setDescription('Confirm reset').setRequired(true)),
   ) as SlashCommandBuilder;
 
@@ -48,6 +55,7 @@ const campaignHandlers: Record<string, CommandHandler> = {
   join: campaignJoinHandler,
   leave: campaignLeaveHandler,
   reset: campaignResetHandler,
+  threads: campaignThreadsHandler,
 };
 
 const campaignCmd: CommandHandler & { data: SlashCommandBuilder } = {
@@ -70,10 +78,11 @@ export const commands: (CommandHandler & { data: { toJSON(): unknown } })[] = [
   saveCmd as CommandHandler & { data: { toJSON(): unknown } },
   initiativeCmd as CommandHandler & { data: { toJSON(): unknown } },
   combatCmd as CommandHandler & { data: { toJSON(): unknown } },
+  voiceCmd as CommandHandler & { data: { toJSON(): unknown } },
   debugCmd as CommandHandler & { data: { toJSON(): unknown } },
 ];
 
-export { handleCharacterComponent };
+export { handleCharacterComponent, handleCharacterAutocomplete };
 
 export async function registerSlashCommands(): Promise<void> {
   const rest = new REST().setToken(config.discord.token);

@@ -150,6 +150,8 @@ export interface CheckRollResult extends RollResult {
   success: boolean;
   natural20: boolean;
   natural1: boolean;
+  abilityModifier: number;
+  proficiencyApplied: number;
 }
 
 export function rollAbilityCheck(input: CheckRollInput): CheckRollResult {
@@ -166,6 +168,8 @@ export function rollAbilityCheck(input: CheckRollInput): CheckRollResult {
     success: result.total >= input.dc,
     natural20: natural === 20,
     natural1: natural === 1,
+    abilityModifier: input.abilityModifier,
+    proficiencyApplied: profBonus,
   };
 }
 

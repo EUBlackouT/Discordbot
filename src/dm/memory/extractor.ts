@@ -1,6 +1,7 @@
 import { prisma } from '../../db/client.js';
 import { toJson, parseJson } from '../../utils/helpers.js';
 import type { MemoryExtractorOutput } from '../../validation/schemas.js';
+import { createNpcWithVoice } from '../../voice/npc-voice-service.js';
 
 export async function applyMemoryExtraction(
   campaignId: string,
@@ -62,5 +63,54 @@ export async function applyMemoryExtraction(
     if (questId && status) {
       await prisma.quest.update({ where: { id: questId }, data: { status } });
     }
+  }
+
+  for (const update of extraction.npc_updates) {
+    const name = typeof update.name === 'string' ? update.name.trim() : '';
+    if (!name) continue;
+
+    const existing = await prisma.nPC.findFirst({ where: { campaignId, name } });
+    if (existing) {
+      await prisma.nPC.update({
+        where: { id: existing.id },
+        data: {
+          description: typeof update.description === 'string' ? update.description : undefined,
+          attitude: typeof update.attitude === 'string' ? update.attitude : undefined,
+          goals: typeof update.goals === 'string' ? update.goals : undefined,
+          locationId:
+            typeof update.location_id === 'string'
+              ? update.location_id
+              : typeof update.locationId === 'string'
+                ? update.locationId
+                : undefined,
+        },
+      });
+      continue;
+    }
+
+    const create =
+      update.create === true ||
+      update.action === 'create' ||
+      typeof update.description === 'string';
+    if (!create) continue;
+
+    await createNpcWithVoice(campaignId, {
+      name,
+      description: typeof update.description === 'string' ? update.description : '',
+      attitude: typeof update.attitude === 'string' ? update.attitude : 'neutral',
+      goals: typeof update.goals === 'string' ? update.goals : '',
+      visualDescription:
+        typeof update.visual_description === 'string'
+          ? update.visual_description
+          : typeof update.visualDescription === 'string'
+            ? update.visualDescription
+            : '',
+      locationId:
+        typeof update.location_id === 'string'
+          ? update.location_id
+          : typeof update.locationId === 'string'
+            ? update.locationId
+            : null,
+    });
   }
 }

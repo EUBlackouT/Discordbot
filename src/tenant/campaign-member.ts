@@ -49,7 +49,10 @@ export async function joinCampaign(
 
   await prisma.character.update({
     where: { id: character.id },
-    data: { campaignId },
+    data: {
+      campaignId,
+      currentLocationId: character.currentLocationId ?? campaign.currentLocationId,
+    },
   });
 
   const member = await prisma.campaignMember.upsert({

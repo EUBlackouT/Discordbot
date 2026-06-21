@@ -1,6 +1,7 @@
 import { prisma } from '../../db/client.js';
 import { toJson } from '../../utils/helpers.js';
 import { rollAbilityCheck, type CheckRollResult } from '../dice/engine.js';
+import { formatRollSummary } from './check-display.js';
 import { parseJson } from '../../utils/helpers.js';
 import type { Ability } from '../../utils/helpers.js';
 import type { PendingCheck } from '@prisma/client';
@@ -133,9 +134,18 @@ export function formatCheckRequest(pending: PendingCheck): string {
   return `**${skillPart}Check Required** (DC ${pending.dc})\n${pending.publicReason}\n\nUse \`/check\` or the Roll button to resolve.`;
 }
 
+export {
+  formatCheckLabel,
+  formatRollSummary,
+  formatRollPlayerLine,
+  formatCheckPromptField,
+  computeOutcomeTier,
+  computeMargin,
+} from './check-display.js';
+
+/** @deprecated Use formatRollSummary — kept for tests migrating to new name */
 export function formatRollResult(roll: CheckRollResult, pending: PendingCheck): string {
-  const outcome = roll.success ? '**Success!**' : '**Failure.**';
-  return `${roll.breakdown}\n${outcome} (DC ${roll.dc})\nTotal: **${roll.total}**`;
+  return formatRollSummary(pending, roll);
 }
 
 export async function hasUnresolvedCheck(campaignId: string): Promise<boolean> {

@@ -7,6 +7,8 @@ import type { Ability } from '../../../utils/helpers.js';
 import { getCampaignByChannel } from '../../../campaign/state.js';
 import { processCheckRoll } from '../../../core/campaign-loop.js';
 import { getCharactersForPlayer } from '../../../game/character/service.js';
+import { buildCampaignTurnReply } from '../../campaign-reply.js';
+import { getActiveCharacterForPlayer } from '../../../tenant/campaign-member.js';
 import { loadRulesData, getSkillAbility } from '../../../game/rules/loader.js';
 
 const diceBuilder = () => new SlashCommandBuilder().setName('dice').setDescription('Dice rolling');
@@ -72,7 +74,21 @@ export const checkCmd: CommandHandler = {
       if (pending) {
         await interaction.deferReply();
         const result = await processCheckRoll(campaign.id, interaction.user.id);
-        await interaction.editReply(result.narration);
+        const character = await getActiveCharacterForPlayer(campaign.id, interaction.user.id);
+        const payload = buildCampaignTurnReply(
+          result,
+          character
+            ? {
+                player: {
+                  displayName: interaction.user.displayName,
+                  characterName: character.name,
+                  characterId: character.id,
+                  action: result.rollPlayerLine ?? 'Rolls the dice',
+                },
+              }
+            : {},
+        );
+        await interaction.editReply(payload);
         return;
       }
     }

@@ -241,6 +241,9 @@ model NPC {
   locationId    String?
   isActive      Boolean  @default(true)
   activeAssetId String?
+  /** ElevenLabs voice_id — assigned once per NPC, never the narrator voice */
+  elevenLabsVoiceId String @default("")
+  voiceLabel        String @default("")
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 

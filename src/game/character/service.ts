@@ -1,5 +1,6 @@
 import { prisma } from '../../db/client.js';
 import { toJson, parseJson } from '../../utils/helpers.js';
+import type { Character } from '@prisma/client';
 import {
   validateCharacterBuild,
   buildAppearanceDescription,
@@ -14,8 +15,158 @@ import {
   buildStatsFromDraft,
   computeSpellSlots,
 } from './draft-types.js';
-import { SRD_RACES } from '../rules/srd-data.js';
-import { loadRulesData } from '../rules/loader.js';
+import { SRD_RACES, SRD_CLASSES, SRD_BACKGROUNDS, type SrdBackground, type SrdClass, type SrdRace } from '../rules/srd-data.js';
+
+interface AssembledCharacter {
+  build: CharacterBuildInput & { portraitPrompt: string };
+  stats: ReturnType<typeof buildStatsFromDraft>;
+  equipment: string[];
+  features: string[];
+  languages: string[];
+  spellcastingPayload: Record<string, unknown> | null;
+}
+
+function resolveDraftEntities(data: CharacterDraftData) {
+  const race = SRD_RACES.find((r) => r.key === data.raceKey);
+  const cls = SRD_CLASSES.find((c) => c.key === data.classKey);
+  const bg = SRD_BACKGROUNDS.find((b) => b.key === data.backgroundKey);
+  return { race, cls, bg };
+}
+
+function assembleCharacterFromDraft(
+  data: CharacterDraftData,
+  race: SrdRace,
+  cls: SrdClass,
+  bg: SrdBackground,
+): AssembledCharacter {
+  const stats = buildStatsFromDraft(data, race, cls);
+  const appearance = buildAppearanceDescription(data.appearanceAnswers ?? {});
+  const features = assembleFeatures(race, cls, data, bg.features);
+  const languages = assembleLanguages(race, data);
+  const equipment = [
+    ...(data.equipment ?? []),
+    ...bg.equipment.filter((e) => !(data.equipment ?? []).some((x) => x.includes(e.split(' ')[0]))),
+  ];
+
+  const spellcastingPayload = cls.spellcasting
+    ? {
+        ability: cls.spellcasting.ability,
+        ritual: cls.spellcasting.ritual,
+        cantrips: data.cantrips ?? [],
+        spellsKnown: data.spellsKnown ?? [],
+        spellsPrepared: data.spellsPrepared ?? [],
+        slots: computeSpellSlots(cls, 1),
+        classChoices: data.classChoices ?? {},
+      }
+    : data.classChoices && Object.keys(data.classChoices).length
+      ? { classChoices: data.classChoices }
+      : null;
+
+  const build: CharacterBuildInput & { portraitPrompt: string } = {
+    name: data.name!,
+    race: race.name,
+    className: cls.name,
+    background: bg.name,
+    level: 1,
+    abilityScores: stats.abilityScores,
+    savingThrows: cls.savingThrows as CharacterBuildInput['savingThrows'],
+    skillProficiencies: stats.skills,
+    hitPoints: stats.hitPoints,
+    maxHitPoints: stats.maxHitPoints,
+    hitDice: cls.hitDie,
+    armorClass: stats.armorClass,
+    speed: stats.speed,
+    equipment,
+    languages,
+    features,
+    personality: data.personalityTrait ?? '',
+    ideals: data.ideal ?? '',
+    bonds: data.bond ?? '',
+    flaws: data.flaw ?? '',
+    backstory: data.backstory ?? '',
+    appearance,
+    portraitPrompt: buildPortraitPromptFromCharacter(
+      data.name!,
+      race.name,
+      cls.name,
+      appearance,
+      'text, watermark, UI, modern objects',
+    ),
+  };
+
+  return { build, stats, equipment, features, languages, spellcastingPayload };
+}
+
+function characterRecordFromAssembly(
+  assembled: AssembledCharacter,
+  ids: { guildId: string; discordId: string; playerId: string; campaignId: string | null },
+  preview = false,
+): Character {
+  const { build, stats, equipment, features, languages, spellcastingPayload } = assembled;
+  const now = new Date();
+  return {
+    id: preview ? 'preview' : '',
+    guildId: ids.guildId,
+    campaignId: ids.campaignId,
+    playerId: ids.playerId,
+    ownerDiscordId: ids.discordId,
+    name: build.name,
+    race: build.race,
+    className: build.className,
+    background: build.background,
+    level: build.level,
+    abilityScores: toJson(build.abilityScores),
+    abilityMods: toJson(stats.abilityMods),
+    proficiencyBonus: stats.proficiencyBonus,
+    savingThrows: toJson(build.savingThrows),
+    skillProficiencies: toJson(build.skillProficiencies),
+    armorClass: build.armorClass,
+    hitPoints: build.hitPoints,
+    maxHitPoints: build.maxHitPoints,
+    hitDice: build.hitDice,
+    initiative: stats.initiative,
+    speed: build.speed,
+    passivePerception: stats.passivePerception,
+    equipment: toJson(equipment),
+    languages: toJson(languages),
+    features: toJson(features),
+    spellcasting: spellcastingPayload ? toJson(spellcastingPayload) : null,
+    personality: build.personality ?? '',
+    ideals: build.ideals ?? '',
+    bonds: build.bonds ?? '',
+    flaws: build.flaws ?? '',
+    backstory: build.backstory ?? '',
+    appearance: build.appearance ?? '',
+    portraitPrompt: build.portraitPrompt,
+    conditions: '[]',
+    inventory: '[]',
+    currency: '{}',
+    currentLocationId: null,
+    isComplete: !preview,
+    isActive: true,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+/** Build a full sheet-compatible character from wizard draft data (not persisted). */
+export function buildCharacterPreviewFromDraft(data: CharacterDraftData): Character | null {
+  const { race, cls, bg } = resolveDraftEntities(data);
+  if (!race || !cls || !bg || !data.name?.trim()) return null;
+
+  const errors = validateDraftForFinalize(data, race, cls);
+  if (errors.length) return null;
+
+  const assembled = assembleCharacterFromDraft(data, race, cls, bg);
+  const validation = validateCharacterBuild(assembled.build);
+  if (!validation.valid) return null;
+
+  return characterRecordFromAssembly(
+    assembled,
+    { guildId: '', discordId: '', playerId: '', campaignId: null },
+    true,
+  );
+}
 
 export async function getOrCreatePlayer(discordId: string, campaignId?: string) {
   const existing = await prisma.player.findFirst({
@@ -69,82 +220,19 @@ export async function finalizeCharacter(guildId: string, discordId: string, camp
   if (!draft) throw new Error('No character creation in progress.');
 
   const data = parseJson<CharacterDraftData>(draft.data, {});
-  const rules = await loadRulesData();
-  const race = SRD_RACES.find((r) => r.key === data.raceKey);
-  const cls = rules.classes.find((c) => c.key === data.classKey);
-  const bg = rules.backgrounds.find((b) => b.key === data.backgroundKey);
+  const { race, cls, bg } = resolveDraftEntities(data);
 
   if (!race || !cls || !bg) throw new Error('Incomplete character draft.');
 
   const errors = validateDraftForFinalize(data, race, cls);
   if (errors.length) throw new Error(errors.join('; '));
 
-  const stats = buildStatsFromDraft(data, race, cls);
-  const player = await getOrCreatePlayer(discordId, campaignId);
-
-  const appearance = buildAppearanceDescription(data.appearanceAnswers ?? {});
-  const features = assembleFeatures(race, cls, data, bg.features);
-  const languages = assembleLanguages(race, data);
-  const equipment = [
-    ...(data.equipment ?? []),
-    ...bg.equipment.filter((e) => !(data.equipment ?? []).some((x) => x.includes(e.split(' ')[0]))),
-  ];
-
-  const spellcastingPayload = cls.spellcasting
-    ? {
-        ability: cls.spellcasting.ability,
-        ritual: cls.spellcasting.ritual,
-        cantrips: data.cantrips ?? [],
-        spellsKnown: data.spellsKnown ?? [],
-        spellsPrepared: data.spellsPrepared ?? [],
-        slots: computeSpellSlots(cls, 1),
-        classChoices: data.classChoices ?? {},
-      }
-    : data.classChoices && Object.keys(data.classChoices).length
-      ? { classChoices: data.classChoices }
-      : null;
-
-  const spellsKnown = [...(data.cantrips ?? []), ...(data.spellsKnown ?? [])];
-  const spellsPrepared = cls.spellcasting?.spellsPrepared
-    ? [...(data.cantrips ?? []), ...(data.spellsPrepared ?? [])]
-    : spellsKnown;
-
-  const build = {
-    name: data.name!,
-    race: race.name,
-    className: cls.name,
-    background: bg.name,
-    level: 1,
-    abilityScores: stats.abilityScores,
-    savingThrows: cls.savingThrows as CharacterBuildInput['savingThrows'],
-    skillProficiencies: stats.skills,
-    hitPoints: stats.hitPoints,
-    maxHitPoints: stats.maxHitPoints,
-    hitDice: cls.hitDie,
-    armorClass: stats.armorClass,
-    speed: stats.speed,
-    equipment,
-    languages,
-    features,
-    personality: data.personalityTrait ?? '',
-    ideals: data.ideal ?? '',
-    bonds: data.bond ?? '',
-    flaws: data.flaw ?? '',
-    backstory: data.backstory ?? '',
-    appearance,
-    portraitPrompt: '',
-  };
-
-  const validation = validateCharacterBuild(build);
+  const assembled = assembleCharacterFromDraft(data, race, cls, bg);
+  const validation = validateCharacterBuild(assembled.build);
   if (!validation.valid) throw new Error(`Character incomplete: ${validation.errors.join(', ')}`);
 
-  build.portraitPrompt = buildPortraitPromptFromCharacter(
-    build.name,
-    build.race,
-    build.className,
-    appearance,
-    'text, watermark, UI, modern objects',
-  );
+  const player = await getOrCreatePlayer(discordId, campaignId);
+  const { build, stats, equipment, features, languages, spellcastingPayload } = assembled;
 
   const character = await prisma.character.create({
     data: {
@@ -189,6 +277,26 @@ export async function finalizeCharacter(guildId: string, discordId: string, camp
   return character;
 }
 
+/** Update stored appearance text and rebuild the portrait prompt for image generation. */
+export async function updateCharacterAppearance(characterId: string, lookDescription: string) {
+  const character = await prisma.character.findUniqueOrThrow({ where: { id: characterId } });
+  const appearance = lookDescription.trim();
+  if (!appearance) throw new Error('Appearance description cannot be empty.');
+
+  const portraitPrompt = buildPortraitPromptFromCharacter(
+    character.name,
+    character.race,
+    character.className,
+    appearance,
+    'text, watermark, UI, modern objects',
+  );
+
+  return prisma.character.update({
+    where: { id: characterId },
+    data: { appearance, portraitPrompt },
+  });
+}
+
 export async function getCharactersForPlayer(
   guildId: string,
   discordId: string,
@@ -198,10 +306,36 @@ export async function getCharactersForPlayer(
     where: {
       guildId,
       ownerDiscordId: discordId,
-      campaignId: campaignId ?? undefined,
       isActive: true,
+      ...(campaignId ? { campaignId } : {}),
     },
   });
+}
+
+/** Resolve which character a slash command targets. */
+export async function resolveCharacterForPlayer(
+  guildId: string,
+  discordId: string,
+  options: { name?: string | null; campaignId?: string | null },
+) {
+  const all = await prisma.character.findMany({
+    where: { guildId, ownerDiscordId: discordId, isActive: true },
+  });
+
+  if (options.name?.trim()) {
+    return all.find((c) => c.name.toLowerCase() === options.name!.trim().toLowerCase()) ?? null;
+  }
+
+  if (options.campaignId) {
+    const { getActiveCharacterForPlayer } = await import('../../tenant/campaign-member.js');
+    const active = await getActiveCharacterForPlayer(options.campaignId, discordId);
+    if (active) return active;
+    const inCampaign = all.find((c) => c.campaignId === options.campaignId);
+    if (inCampaign) return inCampaign;
+  }
+
+  if (all.length === 1) return all[0];
+  return null;
 }
 
 export async function getCharacterSheet(characterId: string, guildId: string, discordId: string) {
@@ -210,67 +344,8 @@ export async function getCharacterSheet(characterId: string, guildId: string, di
   });
   if (!character) throw new Error('Character not found.');
 
-  const scores = parseJson<Record<string, number>>(character.abilityScores, {});
-  const mods = parseJson<Record<string, number>>(character.abilityMods, {});
-  const skills = parseJson<string[]>(character.skillProficiencies, []);
-  const saves = parseJson<string[]>(character.savingThrows, []);
-  const features = parseJson<string[]>(character.features, []);
-  const languages = parseJson<string[]>(character.languages, []);
-  const equipment = parseJson<string[]>(character.equipment, []);
-  const spellMeta = parseJson<{
-    cantrips?: string[];
-    spellsKnown?: string[];
-    spellsPrepared?: string[];
-    slots?: Record<string, number>;
-    classChoices?: Record<string, string>;
-  }>(character.spellcasting ?? '{}', {});
-
-  const spellsKnown = spellMeta.spellsKnown?.length
-    ? [...(spellMeta.cantrips ?? []), ...spellMeta.spellsKnown]
-    : parseJson<string[]>(character.spellcasting ?? '[]', []);
-  const spellsPrepared = spellMeta.spellsPrepared ?? spellsKnown;
-  const spellSlots = spellMeta.slots ?? {};
-  const classChoices = spellMeta.classChoices ?? {};
-
-  const lines = [
-    `**${character.name}** — Level ${character.level} ${character.race} ${character.className}`,
-    `Background: ${character.background}`,
-    '',
-    '**Ability Scores**',
-    ...Object.entries(scores).map(([k, v]) => `${k}: ${v} (${mods[k] >= 0 ? '+' : ''}${mods[k]})`),
-    '',
-    `**AC:** ${character.armorClass} | **HP:** ${character.hitPoints}/${character.maxHitPoints}`,
-    `**Speed:** ${character.speed} ft | **Initiative:** ${character.initiative >= 0 ? '+' : ''}${character.initiative}`,
-    `**Proficiency:** +${character.proficiencyBonus} | **Passive Perception:** ${character.passivePerception}`,
-    '',
-    `**Saving Throws:** ${saves.join(', ')}`,
-    `**Skills:** ${skills.join(', ') || 'None'}`,
-    '',
-    '**Features & Traits**',
-    ...features.map((f) => `• ${f}`),
-    '',
-    `**Languages:** ${languages.join(', ') || 'Common'}`,
-    `**Equipment:** ${equipment.join('; ') || 'None'}`,
-  ];
-
-  if (spellsKnown.length > 0) {
-    lines.push('', '**Spells**');
-    if (spellSlots['1']) lines.push(`Slots: ${spellSlots['1']} × 1st level`);
-    lines.push(`Known: ${spellsKnown.join(', ')}`);
-    if (spellsPrepared.length) lines.push(`Prepared: ${spellsPrepared.join(', ')}`);
-  }
-
-  if (Object.keys(classChoices).length) {
-    lines.push('', '**Class Choices**', ...Object.entries(classChoices).map(([k, v]) => `• ${k}: ${v}`));
-  }
-
-  if (character.personality) lines.push('', `**Personality:** ${character.personality}`);
-  if (character.ideals) lines.push(`**Ideal:** ${character.ideals}`);
-  if (character.bonds) lines.push(`**Bond:** ${character.bonds}`);
-  if (character.flaws) lines.push(`**Flaw:** ${character.flaws}`);
-  if (character.appearance) lines.push('', `**Appearance:**\n${character.appearance}`);
-
-  return lines.filter(Boolean).join('\n');
+  const { buildCharacterSheetMarkdown } = await import('./sheet-display.js');
+  return buildCharacterSheetMarkdown(character);
 }
 
 export async function deleteCharacter(characterId: string, guildId: string, discordId: string): Promise<void> {

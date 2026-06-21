@@ -1,0 +1,18 @@
+{
+  "version": 2,
+  "scriptHash": "6d977a77ad87ead8",
+  "profileHash": "adf6cea21091c6d6",
+  "bakeSessionId": "adf6cea21091c6d6-1782066710149-c39c2d0e",
+  "narratorVoiceId": "onwK4e9ZLuTAKqWW03F9",
+  "npcVoices": {
+    "Captain Mira Thornvale": "W3C2vBPukr5b5jvoXhPK",
+    "Sister Caldra Venn": "Xb7hH8MSUJpSbSDYk0k2"
+  },
+  "npcVoiceLabels": {
+    "Captain Mira Thornvale": "Captain Mira Thornvale (override)",
+    "Sister Caldra Venn": "Alice - Clear, Engaging Educator"
+  },
+  "ambienceEnabled": true,
+  "ambienceMixed": true,
+  "generatedAt": "2026-06-21T18:32:36.247Z"
+}

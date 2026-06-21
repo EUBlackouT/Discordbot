@@ -4,7 +4,11 @@ import { v4 as uuidv4 } from 'uuid';
 import OpenAI from 'openai';
 import { config } from '../config/index.js';
 import { prisma } from '../db/client.js';
-import { buildLocationPrompt, buildCharacterPortraitPrompt } from './prompt-builder.js';
+import {
+  buildLocationPrompt,
+  buildCharacterPortraitPrompt,
+  buildNpcPortraitPrompt,
+} from './prompt-builder.js';
 import type { AssetDecision } from '../validation/schemas.js';
 import type { CampaignStatePacket } from '../campaign/state.js';
 import { logger } from '../utils/logger.js';
@@ -61,6 +65,12 @@ async function persistAsset(
       data: { isActive: false },
     });
   }
+  if (input.npcId) {
+    await prisma.asset.updateMany({
+      where: { npcId: input.npcId, assetType: 'npc_portrait', isActive: true },
+      data: { isActive: false },
+    });
+  }
 
   const asset = await prisma.asset.create({
     data: {
@@ -86,6 +96,12 @@ async function persistAsset(
   if (input.locationId) {
     await prisma.location.update({
       where: { id: input.locationId },
+      data: { activeAssetId: asset.id },
+    });
+  }
+  if (input.npcId) {
+    await prisma.nPC.update({
+      where: { id: input.npcId },
       data: { activeAssetId: asset.id },
     });
   }
@@ -201,7 +217,7 @@ export class OpenAIImageService implements ImageService {
         model,
         prompt: input.prompt.slice(0, 4000),
         n: 1,
-        size: '1024x1024' as const,
+        size: (kind === 'location' ? '1536x1024' : '1024x1024') as '1536x1024' | '1024x1024',
       };
 
       let response;
@@ -474,6 +490,80 @@ export class AssetManager {
     userCooldowns.set(ownerDiscordId, Date.now());
     await this.incrementUsage(campaignId);
     return result;
+  }
+
+  async ensureNpcPortrait(
+    campaignId: string,
+    npcId: string,
+    ownerDiscordId?: string,
+  ): Promise<string | undefined> {
+    const npc = await prisma.nPC.findUnique({ where: { id: npcId } });
+    if (!npc) return undefined;
+
+    if (npc.activeAssetId) {
+      const active = await this.imageService.getAsset(npc.activeAssetId);
+      const fromActive = await firstRenderablePortraitPath(active?.localPath);
+      if (fromActive) return fromActive;
+    }
+
+    const existing = await prisma.asset.findFirst({
+      where: { npcId, assetType: 'npc_portrait', isActive: true },
+      orderBy: { version: 'desc' },
+    });
+    const fromExisting = await firstRenderablePortraitPath(existing?.localPath);
+    if (fromExisting) return fromExisting;
+
+    if (!config.image.apiKey) return undefined;
+
+    const check = await this.canGenerate(campaignId, ownerDiscordId, {
+      bypassAutoGate: true,
+      skipUserCooldown: true,
+    });
+    if (!check.allowed) {
+      logger.info(`NPC portrait skipped: ${check.reason}`);
+      return undefined;
+    }
+
+    try {
+      const style = await prisma.visualStyleProfile.findUnique({ where: { campaignId } });
+      const styleProfile = {
+        artStyle: style?.artStyle ?? 'dark fantasy painterly',
+        colorPalette: style?.colorPalette ?? 'muted earth tones',
+        lightingMood: style?.lightingMood ?? 'dramatic lighting',
+        negativePrompt: style?.negativePrompt ?? 'text, watermark, UI',
+        cameraFraming: 'portrait head and shoulders',
+      };
+
+      const appearance =
+        npc.visualDescription?.trim() ||
+        npc.description?.trim() ||
+        `A memorable ${npc.name} fitting a medieval fantasy port town.`;
+
+      const { prompt, negativePrompt } = buildNpcPortraitPrompt({
+        name: npc.name,
+        appearance,
+        attitude: npc.attitude,
+        styleProfile,
+        mood: npc.attitude === 'hostile' ? ' wary, guarded' : undefined,
+      });
+
+      const result = await this.imageService.generateCharacterPortrait({
+        campaignId,
+        assetType: 'npc_portrait',
+        prompt,
+        negativePrompt,
+        npcId,
+        ownerDiscordId,
+        styleProfileId: style?.id,
+        changeSummary: 'First NPC portrait',
+      });
+
+      await this.incrementUsage(campaignId);
+      return (await firstRenderablePortraitPath(result.localPath)) ?? undefined;
+    } catch (err) {
+      logger.warn('NPC portrait generation failed', err);
+      return undefined;
+    }
   }
 
   async getCharacterPortraitPath(characterId: string): Promise<string | undefined> {

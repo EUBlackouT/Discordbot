@@ -9,13 +9,15 @@ import {
 } from 'discord.js';
 import { config, validateConfig } from '../config/index.js';
 import { logger } from '../utils/logger.js';
-import { commands, handleCharacterComponent } from './commands/index.js';
+import { commands, handleCharacterComponent, handleCharacterAutocomplete, registerSlashCommands } from './commands/index.js';
 import { getCampaignByChannel } from '../campaign/state.js';
 import { INTRO_CHOICES } from '../campaign/intro.js';
 import { processCampaignMessage, assetManager } from '../core/campaign-loop.js';
 import { getActiveCharacterForPlayer } from '../tenant/campaign-member.js';
 import { ensureGuild } from '../tenant/guild-service.js';
 import { buildCampaignTurnReply, type PlayerTurnContext } from './campaign-reply.js';
+import { speakCampaignTurn } from '../voice/campaign-voice.js';
+import { voiceManager } from '../voice/voice-manager.js';
 import {
   buildGettingStartedEmbed,
   buildNotInCampaignEmbed,
@@ -23,6 +25,35 @@ import {
 } from './onboarding.js';
 import { getCharactersForPlayer } from '../game/character/service.js';
 import type { CampaignTurnResult } from '../core/campaign-loop.js';
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Brief d20 animation via message edits (Discord has no native dice animation). */
+async function playDiceRollAnimation(
+  edit: (content: string) => Promise<unknown>,
+): Promise<void> {
+  const faces = ['⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
+  await edit('🎲 Rolling d20…');
+  for (let i = 0; i < 4; i++) {
+    await sleep(350);
+    const face = faces[Math.floor(Math.random() * faces.length)];
+    const n = Math.floor(Math.random() * 20) + 1;
+    await edit(`${face} **${n}**…`);
+  }
+}
+
+async function replyAndSpeak(
+  guildId: string | null,
+  send: () => Promise<unknown>,
+  result: CampaignTurnResult,
+): Promise<void> {
+  if (guildId && !result.isPrivate && result.narration?.trim()) {
+    speakCampaignTurn(guildId, result);
+  }
+  await send();
+}
 
 async function buildCampaignReplyPayload(
   result: CampaignTurnResult,
@@ -50,12 +81,16 @@ export function createBotClient(): Client {
       GatewayIntentBits.Guilds,
       GatewayIntentBits.GuildMessages,
       GatewayIntentBits.MessageContent,
+      GatewayIntentBits.GuildVoiceStates,
     ],
     partials: [Partials.Channel],
   });
 
   client.once(Events.ClientReady, async (c) => {
     logger.info(`Bot logged in as ${c.user.tag}`);
+    if (config.discord.guildId) {
+      await registerSlashCommands().catch((err) => logger.warn('Slash command registration failed', err));
+    }
     for (const [, guild] of c.guilds.cache) {
       await ensureGuild(guild.id, guild.name).catch((err) => logger.warn('Guild sync failed', err));
     }
@@ -66,8 +101,27 @@ export function createBotClient(): Client {
     logger.info(`Bot added to guild: ${guild.name} (${guild.id})`);
   });
 
+  client.on(Events.VoiceStateUpdate, (oldState, newState) => {
+    if (newState.member?.id !== client.user?.id) return;
+    const channel = newState.channel;
+    if (channel?.isVoiceBased()) {
+      if (!voiceManager.isConnected(channel.guild.id)) {
+        void voiceManager.adoptChannel(channel).catch((err) => logger.warn('Voice adopt failed', err));
+      }
+      return;
+    }
+    if (!newState.channelId && oldState.channelId) {
+      voiceManager.leave(newState.guild.id);
+    }
+  });
+
   client.on(Events.InteractionCreate, async (interaction: Interaction) => {
     try {
+      if (interaction.isAutocomplete()) {
+        if (await handleCharacterAutocomplete(interaction)) return;
+        return;
+      }
+
       if (interaction.isChatInputCommand()) {
         const command = commands.find((cmd) => {
           const json = cmd.data.toJSON() as { name?: string };
@@ -123,7 +177,30 @@ export function createBotClient(): Client {
           characterId: character.id,
           action,
         });
-        await interaction.channel.send(payload);
+        const channel = interaction.channel;
+        if (channel instanceof TextChannel) {
+          await replyAndSpeak(interaction.guildId, () => channel.send(payload), result);
+        }
+        return;
+      }
+
+      if (interaction.isButton() && interaction.customId === 'combat_end_turn') {
+        const campaign = interaction.channelId ? await getCampaignByChannel(interaction.channelId) : null;
+        if (!campaign) return;
+        const character = await getActiveCharacterForPlayer(campaign.id, interaction.user.id);
+        if (!character) {
+          await interaction.reply({ content: 'Join the campaign first.', ephemeral: true });
+          return;
+        }
+        await interaction.deferReply();
+        const result = await processCampaignMessage(campaign.id, interaction.user.id, 'end my turn', character.id);
+        const payload = await buildCampaignReplyPayload(result, {
+          displayName: interaction.user.displayName,
+          characterName: character.name,
+          characterId: character.id,
+          action: 'Ends their turn',
+        });
+        await replyAndSpeak(interaction.guildId, () => interaction.editReply(payload), result);
         return;
       }
 
@@ -132,6 +209,9 @@ export function createBotClient(): Client {
         if (!campaign) return;
         const { processCheckRoll } = await import('../core/campaign-loop.js');
         await interaction.deferReply();
+        await playDiceRollAnimation((content) =>
+          interaction.editReply({ content, embeds: [], components: [], files: [] }),
+        );
         const result = await processCheckRoll(campaign.id, interaction.user.id);
         const character = await getActiveCharacterForPlayer(campaign.id, interaction.user.id);
         const payload = await buildCampaignReplyPayload(
@@ -141,11 +221,11 @@ export function createBotClient(): Client {
                 displayName: interaction.user.displayName,
                 characterName: character.name,
                 characterId: character.id,
-                action: 'Rolls the dice',
+                action: result.rollPlayerLine ?? 'Rolls the dice',
               }
             : undefined,
         );
-        await interaction.editReply(payload);
+        await replyAndSpeak(interaction.guildId, () => interaction.editReply(payload), result);
       }
     } catch (err) {
       const meta = interaction.isRepliable()
@@ -207,6 +287,10 @@ export function createBotClient(): Client {
         await message.author.send(result.narration);
         await message.react('🔒');
         return;
+      }
+
+      if (message.guild?.id && result.narration?.trim()) {
+        speakCampaignTurn(message.guild.id, result);
       }
 
       const payload = await buildCampaignReplyPayload(

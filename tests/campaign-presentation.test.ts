@@ -32,7 +32,7 @@ describe('campaign presentation', () => {
     expect(payload.embeds[1].data.author?.name).toBe('Chronicler');
   });
 
-  it('attaches scene art to the location panel when present', () => {
+  it('attaches scene art on the chronicler embed when present', () => {
     const payload = buildCampaignTurnReply(
       {
         narration: 'Torches gutter in the wind.',
@@ -49,26 +49,23 @@ describe('campaign presentation', () => {
     );
 
     expect(payload.files).toHaveLength(1);
-    expect(payload.embeds.some((e) => e.data.image?.url === 'attachment://scene.png')).toBe(true);
+    const chronicler = payload.embeds[0];
+    expect(chronicler.data.image?.url).toBe('attachment://scene.png');
+    expect(payload.embeds.some((e) => e.data.title === '🖼️ Scene')).toBe(false);
   });
 
-  it('uses portrait on chronicler author when suppressing duplicate player embed', () => {
+  it('shows NPC as speaker when npcSpeaker is set', () => {
     const payload = buildCampaignTurnReply(
-      { narration: 'The alley swallows you whole.', controllerAction: 'NARRATE' },
       {
-        suppressPlayerEmbed: true,
-        player: {
-          displayName: 'BlackouT',
-          characterName: 'Gyro ironbark',
-          characterId: 'char-1',
-          action: 'I slip into the alley',
-          portraitPath: 'C:/tmp/portrait.png',
-        },
+        narration: '*She lowers her voice.*\n\n"I saw the sigil too — we are marked."',
+        controllerAction: 'NPC_DIALOGUE',
+        npcSpeaker: 'Sister Caldra Venn',
+        locationName: 'Mistharbor Execution Yard',
       },
+      { suppressPlayerEmbed: true },
     );
 
-    expect(payload.embeds).toHaveLength(1);
-    expect(payload.embeds[0].data.author?.name).toBe('Gyro ironbark');
-    expect(payload.embeds[0].data.author?.icon_url).toBe('attachment://portrait-char-1.png');
+    expect(payload.embeds[0].data.author?.name).toBe('Sister Caldra Venn');
+    expect(payload.embeds[0].data.color).toBe(0x5c4033);
   });
 });

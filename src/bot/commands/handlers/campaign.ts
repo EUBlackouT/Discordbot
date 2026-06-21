@@ -1,4 +1,4 @@
-import { AttachmentBuilder } from 'discord.js';
+import { AttachmentBuilder, MessageFlags } from 'discord.js';
 import type { CommandHandler } from '../index.js';
 import {
   startCampaign,
@@ -15,6 +15,26 @@ import { autoJoinStarter, joinCampaign, leaveCampaign, listCampaignParty } from 
 import { canManageCampaign, requireGuild } from '../../../tenant/permissions.js';
 import { buildCampaignOpeningPayload } from '../../onboarding.js';
 import { buildOpeningSceneContent } from '../../../campaign/intro.js';
+import { config } from '../../../config/index.js';
+import { logger } from '../../../utils/logger.js';
+import { prepareCampaignOpeningVoice, playCampaignOpeningVoice } from '../../../voice/opening-voice.js';
+import { isBakedIntroReady } from '../../../voice/baked-intro.js';
+import { voiceManager } from '../../../voice/voice-manager.js';
+import { formatPlotThreadsForPlayers } from '../../../dm/plot/plot-director.js';
+
+const OPENING_VOICE_PREP_MS = 120_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T | null> {
+  return Promise.race([
+    promise,
+    new Promise<null>((resolve) => {
+      setTimeout(() => {
+        logger.warn(`${label} timed out after ${ms}ms`);
+        resolve(null);
+      }, ms);
+    }),
+  ]);
+}
 
 export const startCmd = {
   execute: async (interaction: Parameters<CommandHandler['execute']>[0]) => {
@@ -50,15 +70,42 @@ export const startCmd = {
           : undefined,
       );
 
-      const sceneAsset = await assetManager.generateOpeningSceneImage(result.campaign.id, {
-        id: result.location.id,
-        name: result.location.name,
-        visualDescription: result.location.visualDescription,
-        mood: result.location.mood,
-      });
-      if (sceneAsset?.localPath?.match(/\.(png|jpg|jpeg|webp)$/i)) {
-        opening.files.push(new AttachmentBuilder(sceneAsset.localPath, { name: 'scene.png' }));
-        opening.embeds[0].setImage('attachment://scene.png');
+      const partyContext = { partyNames: party.map((m) => m.character.name) };
+
+      const imagePromise = assetManager
+        .generateOpeningSceneImage(result.campaign.id, {
+          id: result.location.id,
+          name: result.location.name,
+          visualDescription: result.location.visualDescription,
+          mood: result.location.mood,
+        })
+        .catch((err) => {
+          logger.warn('Opening scene image failed', err);
+          return null;
+        });
+
+      // Hold opening text until narration is rendered so voice starts with the post.
+      let openingVoice = null;
+      if (interaction.guildId && config.voice.enabled && voiceManager.isConnected(interaction.guildId)) {
+        const bakedReady = await isBakedIntroReady();
+        if (!bakedReady) {
+          await interaction.editReply({
+            content: 'Preparing opening narration (this can take up to a minute)…',
+          });
+        }
+        openingVoice = await withTimeout(
+          prepareCampaignOpeningVoice(
+            interaction.guildId,
+            result.campaign.id,
+            result.location,
+            partyContext,
+          ),
+          OPENING_VOICE_PREP_MS,
+          'Opening voice prepare',
+        ).catch((err) => {
+          logger.warn('Opening voice prepare failed', err);
+          return null;
+        });
       }
 
       await channel.send({
@@ -67,8 +114,27 @@ export const startCmd = {
         files: opening.files,
       });
 
+      if (openingVoice && interaction.guildId) {
+        playCampaignOpeningVoice(interaction.guildId, openingVoice);
+      }
+
+      void imagePromise.then(async (sceneAsset) => {
+        if (!sceneAsset?.localPath?.match(/\.(png|jpg|jpeg|webp)$/i)) return;
+        await channel.send({
+          content: `_${result.location.name}_`,
+          files: [new AttachmentBuilder(sceneAsset.localPath, { name: 'scene.png' })],
+        });
+      });
+
+      const voiceHint =
+        config.voice.enabled && interaction.guildId
+          ? voiceManager.isConnected(interaction.guildId)
+            ? ' The opening is being read aloud in voice.'
+            : ' Join a voice channel and run `/voice join` before starting next time to hear the prologue.'
+          : '';
+
       await interaction.editReply({
-        content: `✅ **${result.campaign.name}** has begun in ${channel}. The opening scene is posted above for everyone.`,
+        content: `✅ **${result.campaign.name}** has begun in ${channel}. The opening scene is posted above for everyone.${voiceHint}`,
       });
     } catch (err) {
       await interaction.editReply({ content: `Error: ${(err as Error).message}` });
@@ -238,6 +304,23 @@ export const partyCmd = {
   },
 };
 
+export const threadsCmd = {
+  execute: async (interaction: Parameters<CommandHandler['execute']>[0]) => {
+    const campaign = interaction.channelId ? await getCampaignByChannel(interaction.channelId) : null;
+    if (!campaign) {
+      await interaction.reply({ content: 'No active campaign in this channel.', ephemeral: true });
+      return;
+    }
+    await interaction.deferReply({ ephemeral: true });
+    const state = await buildStatePacket(campaign.id);
+    const text = formatPlotThreadsForPlayers(state.campaign.plotThreads, {
+      campaignThroughline: state.campaign.campaignThroughline,
+      primaryQuest: state.activeQuest,
+    });
+    await interaction.editReply(text.slice(0, 2000));
+  },
+};
+
 export const leaveCmd = {
   execute: async (interaction: Parameters<CommandHandler['execute']>[0]) => {
     const campaign = interaction.channelId ? await getCampaignByChannel(interaction.channelId) : null;
@@ -257,21 +340,23 @@ export const leaveCmd = {
 
 export const resetCmd = {
   execute: async (interaction: Parameters<CommandHandler['execute']>[0]) => {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
     const confirm = interaction.options.getBoolean('confirm', true);
     const campaign = interaction.channelId ? await getCampaignByChannel(interaction.channelId) : null;
     if (!campaign) {
-      await interaction.reply({ content: 'No active campaign.', ephemeral: true });
+      await interaction.editReply({ content: 'No active campaign.' });
       return;
     }
     if (!(await canManageCampaign(interaction))) {
-      await interaction.reply({ content: 'Only server admins can reset a campaign.', ephemeral: true });
+      await interaction.editReply({ content: 'Only server admins can reset a campaign.' });
       return;
     }
     if (!confirm) {
-      await interaction.reply({ content: 'Reset cancelled.', ephemeral: true });
+      await interaction.editReply({ content: 'Reset cancelled.' });
       return;
     }
     await resetCampaign(campaign.id);
-    await interaction.reply({ content: 'Campaign has been reset.', ephemeral: true });
+    await interaction.editReply({ content: 'Campaign has been reset.' });
   },
 };

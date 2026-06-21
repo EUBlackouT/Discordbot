@@ -2,7 +2,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { config } from '../../config/index.js';
 import { logger } from '../../utils/logger.js';
-import type { MemoryExtractorOutput } from '../../validation/schemas.js';
+import type { MemoryExtractorOutput, PlotThread } from '../../validation/schemas.js';
+import { parsePlotThreads } from '../../validation/schemas.js';
 
 const MAX_TURN_LOG_LINES = 40;
 const MAX_FACTS = 35;
@@ -27,6 +28,12 @@ ${openingSituation}
 - A public execution in Mistharbor went wrong — the prisoner vanished from the scaffold
 - Riot and panic spread through the execution yard
 
+## Main Campaign
+(still forming — the AI will name the overarching campaign focus after play begins)
+
+## Progression Beats
+[]
+
 ## Turn Log
 `;
 }
@@ -44,7 +51,7 @@ export async function ensureChronicle(
   } catch {
     const situation =
       openingSituation ??
-      'The campaign begins at the Mistharbor execution yard during a riot after a prisoner vanished from the scaffold.';
+      'The campaign begins at the Mistharbor execution yard during a state hanging of a condemned spy. The crowd — including the party — came to watch. The prisoner vanished from the scaffold in a pale sky sigil; witnesses in the front ranks are being blamed.';
     await fs.writeFile(filePath, buildInitialChronicle(campaignName, situation), 'utf8');
   }
 }
@@ -131,6 +138,29 @@ function prependTurnLog(existing: string, line: string): string {
   return [entry, ...lines].slice(0, MAX_TURN_LOG_LINES).join('\n');
 }
 
+export interface PlotDirectorState {
+  plotThreads: PlotThread[];
+  campaignThroughline: string;
+}
+
+/** Read AI-maintained plot director state from chronicle sections (no DB migration required). */
+export function parsePlotDirectorFromChronicle(chronicle: string): PlotDirectorState {
+  const throughline = extractSection(chronicle, 'Main Campaign');
+  const beatsRaw = extractSection(chronicle, 'Progression Beats');
+  let plotThreads: PlotThread[] = [];
+  if (beatsRaw && beatsRaw !== '[]' && !beatsRaw.startsWith('(')) {
+    try {
+      plotThreads = parsePlotThreads(JSON.parse(beatsRaw));
+    } catch {
+      logger.debug('Could not parse Progression Beats JSON from chronicle');
+    }
+  }
+  return {
+    plotThreads,
+    campaignThroughline: throughline.startsWith('(') ? '' : throughline,
+  };
+}
+
 /** Merge memory-extractor output into the chronicle .txt file. */
 export async function applyChronicleFromMemory(
   campaignId: string,
@@ -170,6 +200,15 @@ export async function applyChronicleFromMemory(
   if (turnLine) {
     const existing = extractSection(chronicle, 'Turn Log');
     chronicle = replaceSection(chronicle, 'Turn Log', prependTurnLog(existing, turnLine));
+  }
+
+  if (memory.campaign_throughline?.trim()) {
+    chronicle = replaceSection(chronicle, 'Main Campaign', memory.campaign_throughline.trim());
+  }
+
+  if (memory.plot_threads.length > 0) {
+    const active = memory.plot_threads.filter((t) => t.status !== 'resolved');
+    chronicle = replaceSection(chronicle, 'Progression Beats', JSON.stringify(active, null, 2));
   }
 
   await fs.writeFile(filePath, chronicle.trim() + '\n', 'utf8');

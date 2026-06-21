@@ -50,6 +50,27 @@ describe('campaign chronicle', () => {
           { name: 'Sister Caldra Venn', status: 'at execution yard, not with party' },
         ],
         chronicle_turn_line: 'Followed Henrick stealthily; left Caldra behind',
+        plot_threads: [
+          {
+            id: 'chase-henrick',
+            title: 'Chasing Henrick',
+            summary: 'Tail through alleys.',
+            campaign_tie: 'Henrick knows who vanished the prisoner.',
+            stakes: 'He reaches bolt-holes first.',
+            status: 'active',
+            momentum: 40,
+            possible_endings: [
+              {
+                id: 'caught',
+                summary: 'Cornered at a bolt-hole.',
+                trigger_hint: 'Close distance.',
+                campaign_advance: 'Faction lead on the vanishing.',
+              },
+            ],
+            controller_guidance: 'Advance each turn.',
+          },
+        ],
+        campaign_throughline: 'Expose who staged the vanishing.',
         importance: 4,
       },
       { playerMessage: 'follow henrick', characterName: 'Gyro' },
@@ -60,5 +81,7 @@ describe('campaign chronicle', () => {
     expect(text).toContain('Sister Caldra Venn: at execution yard, not with party');
     expect(text).toContain('Party left Sister Caldra at the yard');
     expect(text).toContain('Followed Henrick stealthily');
+    expect(text).toContain('Expose who staged the vanishing');
+    expect(text).toContain('"id": "chase-henrick"');
   });
 });

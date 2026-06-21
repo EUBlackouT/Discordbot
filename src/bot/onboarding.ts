@@ -96,8 +96,8 @@ export function buildCampaignOpeningPayload(
 ): CampaignOpeningPayload {
   const visual = new EmbedBuilder()
     .setTitle(scene.locationName)
-    .setDescription(`*${scene.locationTagline}*`)
-    .setColor(0x0a0a12);
+    .setColor(0x0a0a12)
+    .setFooter({ text: scene.locationTagline });
 
   let footer = 'Type what you do — or pick a move below';
   if (joinInfo?.party.length === 1) {

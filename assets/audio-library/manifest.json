@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "outputFormat": "mp3_44100_192",
+  "generatedAt": "2026-06-21T14:45:10.435Z",
+  "beds": [
+    "urban_crowd",
+    "alley",
+    "tavern",
+    "harbor",
+    "execution",
+    "forest",
+    "dungeon",
+    "temple",
+    "castle",
+    "wilderness",
+    "combat",
+    "camp",
+    "default"
+  ],
+  "spots": [
+    "bell",
+    "retch",
+    "manacles",
+    "crowd_scream",
+    "gates",
+    "horse",
+    "birds",
+    "fire",
+    "sword"
+  ]
+}

@@ -131,6 +131,9 @@ export const APPEARANCE_QUESTIONS = [
 ] as const;
 
 export function buildAppearanceDescription(answers: Record<string, string>): string {
+  const brief = answers.look?.trim() || answers.brief?.trim();
+  if (brief) return brief;
+
   return APPEARANCE_QUESTIONS.map((q) => {
     const answer = answers[q.key]?.trim();
     return answer ? `${q.question} ${answer}` : null;
